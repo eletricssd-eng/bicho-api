@@ -12,8 +12,9 @@ app.get("/api", async (req, res) => {
 
     const response = await axios.get(url, {
       headers: {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "text/html"
+        "User-Agent": "Mozilla/5.0 (Windows
+          NT 10.0; Win64; x64)",
+        "Accept": "text/html,application/xhtml+xml"
       },
       timeout: 10000
     });
@@ -24,12 +25,15 @@ app.get("/api", async (req, res) => {
 
     const texto = $("body").text();
 
-    const milhares = texto.match(/\d{4}\b/g);
+    const milhares = texto.match(/\d{4}\b/g) || [];
 
-    if (!milhares || milhares.length < 5) {
+    if (milhares.length < 5) {
+      console.log("HTML recebido:",
+                  texto.substring(0,500)); // debug
+      
       return res.json({
         status: "erro",
-        motivo: "Sem dados suficientes"
+        motivo: "Site mudou ou bloqueou scraping"
       });
     }
 
