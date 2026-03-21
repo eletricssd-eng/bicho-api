@@ -6,73 +6,115 @@ const cheerio = require("cheerio");
 const app = express();
 app.use(cors());
 
-app.get("/api", async (req, res) => {
+// 🧠 HISTÓRICO (memória)
+let historico = [];
+
+// 🔄 FUNÇÃO DE SCRAPING
+async function buscarResultado() {
   try {
     const url = "https://www.resultadofacil.com.br/resultado-do-bicho/";
 
     const response = await axios.get(url, {
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115 Safari/537.36",
-        "Accept":
-          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "pt-BR,pt;q=0.9",
-        "Connection": "keep-alive"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
       },
-      timeout: 15000,
+      timeout: 10000
     });
 
     const $ = cheerio.load(response.data);
-
-    let resultados = [];
-
-    const texto = $("body").text().replace(/\s+/g, " ");
+    const texto = $("body").text();
 
     const milhares = texto.match(/\b\d{4}\b/g) || [];
 
-    // 🔥 Validação forte
     if (milhares.length < 5) {
-      console.log("⚠️ POSSÍVEL BLOQUEIO OU HTML DIFERENTE");
-
-      return res.json({
-        status: "erro",
-        motivo: "Site mudou estrutura ou bloqueou scraping",
-        encontrados: milhares.length
-      });
+      throw new Error("Dados insuficientes");
     }
 
-    // 🎯 Pega os 5 primeiros resultados
+    let resultados = [];
+
     for (let i = 0; i < 5; i++) {
       let milhar = milhares[i];
 
       resultados.push({
         premio: `${i + 1}º`,
-        milhar: milhar,
-        centena: milhar.slice(-3),
+        milhar,
         dezena: milhar.slice(-2),
-        grupo: Math.ceil(parseInt(milhar.slice(-2)) / 4)
+        data: new Date()
       });
     }
 
-    res.json({
-      status: "ok",
-      total: resultados.length,
-      resultados
-    });
+    return resultados;
 
   } catch (e) {
-    console.log("🔥 ERRO REAL:", e.message);
+    console.log("Erro scraping:", e.message);
+    return null;
+  }
+}
 
-    res.status(500).json({
+// 🔁 ATUALIZA AUTOMÁTICO
+setInterval(async () => {
+  const dados = await buscarResultado();
+
+  if (dados) {
+    historico.push(...dados);
+
+    // manter só últimos 7 dias
+    const limite = new Date();
+    limite.setDate(limite.getDate() - 7);
+
+    historico = historico.filter(r => new Date(r.data) > limite);
+
+    console.log("Atualizado histórico:", historico.length);
+  }
+
+}, 60000); // a cada 1 min
+
+// 📊 API RESULTADO ATUAL
+app.get("/api", async (req, res) => {
+  const dados = await buscarResultado();
+
+  if (!dados) {
+    return res.json({
       status: "erro",
-      detalhe: e.message
+      motivo: "Falha no scraping"
     });
   }
+
+  res.json({
+    status: "ok",
+    resultados: dados
+  });
 });
 
-// 🔥 ESSENCIAL PRA RENDER
+// 📚 HISTÓRICO
+app.get("/historico", (req, res) => {
+  res.json({
+    total: historico.length,
+    dados: historico
+  });
+});
+
+// 📈 ANÁLISE 7 DIAS
+app.get("/analise", (req, res) => {
+
+  let freq = {};
+
+  historico.forEach(r => {
+    freq[r.dezena] = (freq[r.dezena] || 0) + 1;
+  });
+
+  let ranking = Object.entries(freq)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10);
+
+  res.json({
+    topDezenas: ranking
+  });
+});
+
+// 🚀 RENDER
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log("🚀 Servidor rodando na porta " + PORT);
+  console.log("Servidor rodando na porta " + PORT);
 });
