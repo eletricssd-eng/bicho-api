@@ -204,6 +204,6 @@ app.get("/", (req, res) => {
 });
 
 // ================= START =================
-app.listen(PORT, "0.0.0.0" () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log("🚀 Rodando na porta " + PORT);
 });
