@@ -2,8 +2,7 @@ import express from "express";
 import axios from "axios";
 import cors from "cors";
 import * as cheerio from "cheerio";
-import puppeteer from "puppeteer-core";
-import chromium from "@sparticuz/chromium";
+
 
 const app = express();
 app.use(cors());
@@ -69,66 +68,47 @@ async function pegarViaAPI() {
 
 // ================= SCRAPING PRO =================
 async function pegarViaScraping() {
-  let browser;
-
   try {
-    console.log("🧠 Scraping PRO iniciado...");
+    console.log("🌐 Scraping leve iniciado...");
 
-    browser = await puppeteer.launch({
-      args: [
-        ...chromium.args,
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--single-process"
-      ],
-      executablePath: await chromium.executablePath(),
-      headless: true
+    const { data: html } = await axios.get("https://www.resultadosdobicho.com/", {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        "Accept-Language": "pt-BR,pt;q=0.9"
+      },
+      timeout: 10000
     });
 
-    const page = await browser.newPage();
+    const $ = cheerio.load(html);
 
-    await page.goto("https://www.resultadosdobicho.com/", {
-      waitUntil: "networkidle2",
-      timeout: 30000
+    let lista = [];
+
+    $("li").each((i, el) => {
+      const texto = $(el).text();
+
+      const match = texto.match(/(\d{1,2})º\s+(\d{4})/);
+
+      if (match) {
+        lista.push({
+          banca: "geral",
+          horario: "",
+          resultados: [{
+            pos: match[1],
+            numero: match[2],
+            bicho: ""
+          }]
+        });
+      }
     });
 
-    const resultados = await page.evaluate(() => {
-      const lista = [];
-
-      document.querySelectorAll("li").forEach(el => {
-        const texto = el.innerText;
-
-        const match = texto.match(/(\d{1,2})º\s+(\d{4})/);
-
-        if (match) {
-          lista.push({
-            banca: "geral",
-            horario: "",
-            resultados: [{
-              pos: match[1],
-              numero: match[2],
-              bicho: ""
-            }]
-          });
-        }
-      });
-
+    if (lista.length > 0) {
+      console.log("✅ SCRAPING LEVE OK");
       return lista;
-    });
-
-    await browser.close();
-
-    if (resultados.length > 0) {
-      console.log("✅ SCRAPING OK");
-      return resultados;
     }
 
   } catch (err) {
-    console.log("❌ ERRO PUPPETEER:", err.message);
+    console.log("❌ ERRO SCRAPING:", err.message);
   }
-
-  if (browser) await browser.close();
 
   return [];
 }
