@@ -41,43 +41,45 @@ function normalizar(data) {
 
 // ================= API =================
 async function pegarViaAPI() {
-  const APIS = [
-    "https://bicho-api.onrender.com/resultados",
-    "https://bicho-api.onrender.com/resultado"
-  ];
+  try {
+    console.log("🔍 Buscando API alternativa...");
 
-  for (let url of APIS) {
-    try {
-      console.log("🔍 API:", url);
+    const { data } = await axios.get(
+      "https://loteriascaixa-api.herokuapp.com/api/jogo-do-bicho",
+      { timeout: 10000 }
+    );
 
-      const { data } = await axios.get(url, { timeout: 5000 });
-      const dados = normalizar(data);
+    if (!data || data.length === 0) return [];
 
-      if (dados.length > 0) {
-        console.log("✅ API OK");
-        return dados;
-      }
+    const resultados = data.map(item => ({
+      banca: item.banca?.toLowerCase() || "geral",
+      horario: item.horario || "",
+      resultados: [
+        {
+          pos: "1",
+          numero: item.dezena || "",
+          bicho: item.bicho || ""
+        }
+      ]
+    }));
 
-    } catch (err) {
-      console.log("❌ API falhou:", err.message);
-    }
+    console.log("✅ API alternativa OK");
+    return resultados;
+
+  } catch (err) {
+    console.log("❌ API alternativa falhou:", err.message);
+    return [];
   }
-
-  return [];
 }
-
 // ================= SCRAPING PRO =================
 async function pegarViaScraping() {
   try {
-    console.log("🌐 Scraping leve iniciado...");
+    console.log("🌐 Scraping via proxy...");
 
-    const { data: html } = await axios.get("https://www.resultadosdobicho.com/", {
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        "Accept-Language": "pt-BR,pt;q=0.9"
-      },
-      timeout: 10000
-    });
+    const { data: html } = await axios.get(
+      "https://api.allorigins.win/raw?url=https://www.resultadosdobicho.com/",
+      { timeout: 10000 }
+    );
 
     const $ = cheerio.load(html);
 
@@ -102,7 +104,7 @@ async function pegarViaScraping() {
     });
 
     if (lista.length > 0) {
-      console.log("✅ SCRAPING LEVE OK");
+      console.log("✅ SCRAPING PROXY OK");
       return lista;
     }
 
