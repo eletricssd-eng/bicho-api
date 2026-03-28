@@ -74,10 +74,10 @@ async function pegarViaAPI() {
 // ================= SCRAPING PRO =================
 async function pegarViaScraping() {
   try {
-    console.log("🌐 Scraping via proxy...");
+    console.log("🌐 Scraping direto funcional...");
 
     const { data: html } = await axios.get(
-      "https://api.allorigins.win/raw?url=https://www.resultadosdobicho.com/",
+      "https://api.allorigins.win/raw?url=https://resultadofacil.com.br/resultado-do-jogo-do-bicho/",
       { timeout: 10000 }
     );
 
@@ -85,26 +85,29 @@ async function pegarViaScraping() {
 
     let lista = [];
 
-    $("li").each((i, el) => {
-      const texto = $(el).text();
+    $("table tr").each((i, el) => {
+      const colunas = $(el).find("td");
 
-      const match = texto.match(/(\d{1,2})º\s+(\d{4})/);
+      if (colunas.length >= 2) {
+        const pos = $(colunas[0]).text().trim();
+        const numero = $(colunas[1]).text().trim();
 
-      if (match) {
-        lista.push({
-          banca: "geral",
-          horario: "",
-          resultados: [{
-            pos: match[1],
-            numero: match[2],
-            bicho: ""
-          }]
-        });
+        if (numero.match(/\d{4}/)) {
+          lista.push({
+            banca: "rio",
+            horario: "",
+            resultados: [{
+              pos,
+              numero,
+              bicho: ""
+            }]
+          });
+        }
       }
     });
 
     if (lista.length > 0) {
-      console.log("✅ SCRAPING PROXY OK");
+      console.log("✅ SCRAPING FUNCIONOU DE VERDADE");
       return lista;
     }
 
@@ -114,7 +117,6 @@ async function pegarViaScraping() {
 
   return [];
 }
-
 // ================= FALLBACK =================
 async function pegarResultadosSeguro() {
   const api = await pegarViaAPI();
@@ -134,12 +136,10 @@ async function pegarResultadosSeguro() {
 // ================= FILTRAR =================
 function separar(dados) {
   return {
-    rio: dados.filter(d => d.banca.includes("rio")),
-    nacional: dados.filter(d => d.banca.includes("nacional")),
-    look: dados.filter(d =>
-      d.banca.includes("look") || d.banca.includes("goias")
-    ),
-    federal: dados.filter(d => d.banca.includes("federal"))
+    rio: dados,
+    nacional: dados,
+    look: dados,
+    federal: dados
   };
 }
 
