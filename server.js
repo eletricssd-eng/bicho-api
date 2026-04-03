@@ -2,7 +2,10 @@ import express from "express";
 import axios from "axios";
 import cors from "cors";
 import * as cheerio from "cheerio";
+import fs from "fs";
+import path from "path";
 
+const __dirname = new URL('.', import.meta.url).pathname;
 
 const app = express();
 app.use(cors());
@@ -119,18 +122,23 @@ async function pegarViaScraping() {
 }
 // ================= FALLBACK =================
 async function pegarResultadosSeguro() {
-  const api = await pegarViaAPI();
-  if (api.length) return { fonte: "api", dados: api };
+  try {
+    console.log("📂 Lendo dados locais...");
 
-  const scrape = await pegarViaScraping();
-  if (scrape.length) return { fonte: "scraping", dados: scrape };
+    const caminho = path.join(__dirname, "dados.json");
 
-  console.log("⚠️ USANDO MOCK");
+    const dados = JSON.parse(fs.readFileSync(caminho, "utf-8"));
 
-  return {
-    fonte: "mock",
-    dados: []
-  };
+    if (dados.length > 0) {
+      console.log("✅ DADOS LOCAIS OK");
+      return { fonte: "local", dados };
+    }
+
+  } catch (err) {
+    console.log("❌ ERRO AO LER JSON:", err.message);
+  }
+
+  return { fonte: "mock", dados: [] };
 }
 
 // ================= FILTRAR =================
