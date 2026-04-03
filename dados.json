@@ -1,0 +1,18 @@
+[
+  {
+    "banca": "rio",
+    "horario": "09:00",
+    "resultados": [
+      { "pos": "1", "numero": "1234", "bicho": "cavalo" },
+      { "pos": "2", "numero": "5678", "bicho": "gato" },
+      { "pos": "3", "numero": "9012", "bicho": "leao" }
+    ]
+  },
+  {
+    "banca": "nacional",
+    "horario": "11:00",
+    "resultados": [
+      { "pos": "1", "numero": "4321", "bicho": "tigre" }
+    ]
+  }
+]
