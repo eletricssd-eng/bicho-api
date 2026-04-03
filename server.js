@@ -40,17 +40,44 @@ function salvarHistorico(novosDados) {
 
   const combinado = [...antigos, ...novosDados];
 
-  // manter só últimos 7 dias
+  // ================= REMOVER DUPLICADOS =================
+  const mapa = {};
+
+  combinado.forEach(item => {
+    item.resultados.forEach(r => {
+
+      const chave = `${item.data}-${item.horario}-${r.pos}`;
+
+      if (!mapa[chave]) {
+        mapa[chave] = {
+          banca: item.banca,
+          horario: item.horario,
+          data: item.data,
+          resultados: []
+        };
+      }
+
+      // evita duplicar dentro do mesmo grupo
+      const jaExiste = mapa[chave].resultados.find(x => x.pos == r.pos);
+
+      if (!jaExiste) {
+        mapa[chave].resultados.push(r);
+      }
+    });
+  });
+
+  let final = Object.values(mapa);
+
+  // ================= MANTER 7 DIAS =================
   const limite = new Date();
   limite.setDate(limite.getDate() - 7);
 
-  const filtrado = combinado.filter(d => new Date(d.data) >= limite);
+  final = final.filter(d => new Date(d.data) >= limite);
 
-  fs.writeFileSync(caminho, JSON.stringify(filtrado, null, 2));
+  fs.writeFileSync(caminho, JSON.stringify(final, null, 2));
 
-  console.log("💾 Histórico atualizado");
+  console.log("💾 Histórico LIMPO e atualizado");
 }
-
 // ================= ANALISE =================
 function analisar(dados) {
   let contagem = {};
