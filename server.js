@@ -4,6 +4,7 @@ import cors from "cors";
 import * as cheerio from "cheerio";
 import fs from "fs";
 import path from "path";
+import cron from "node-cron";
 
 const __dirname = new URL('.', import.meta.url).pathname;
 
@@ -22,120 +23,65 @@ function ordenar(lista) {
   );
 }
 
-// ================= CACHE =================
-let cache = null;
-let ultimaAtualizacao = 0;
-const TEMPO_CACHE = 60000;
+// ================= CAMINHO JSON =================
+const caminho = path.join(__dirname, "dados.json");
 
-// ================= NORMALIZAR =================
-function normalizar(data) {
-  if (!Array.isArray(data)) return [];
+// ================= SALVAR HISTÓRICO =================
+function salvarHistorico(novosDados) {
+  let antigos = [];
 
-  return data.map(item => ({
-    banca: item.bank?.toLowerCase() || item.banca || "",
-    horario: item.time || item.horario || "",
-    resultados: (item.results || item.resultados || []).map(r => ({
-      pos: r.position || r.pos,
-      numero: r.number || r.numero,
-      bicho: r.animal || r.bicho || ""
-    }))
-  }));
+  try {
+    antigos = JSON.parse(fs.readFileSync(caminho, "utf-8"));
+  } catch {}
+
+  const hoje = new Date().toISOString().split("T")[0];
+
+  novosDados.forEach(d => d.data = hoje);
+
+  const combinado = [...antigos, ...novosDados];
+
+  // manter só últimos 7 dias
+  const limite = new Date();
+  limite.setDate(limite.getDate() - 7);
+
+  const filtrado = combinado.filter(d => new Date(d.data) >= limite);
+
+  fs.writeFileSync(caminho, JSON.stringify(filtrado, null, 2));
+
+  console.log("💾 Histórico atualizado");
 }
 
-// ================= API =================
-async function pegarViaAPI() {
-  try {
-    console.log("🔍 Buscando API alternativa...");
+// ================= ANALISE =================
+function analisar(dados) {
+  let contagem = {};
 
-    const { data } = await axios.get(
-      "https://loteriascaixa-api.herokuapp.com/api/jogo-do-bicho",
-      { timeout: 10000 }
-    );
-
-    if (!data || data.length === 0) return [];
-
-    const resultados = data.map(item => ({
-      banca: item.banca?.toLowerCase() || "geral",
-      horario: item.horario || "",
-      resultados: [
-        {
-          pos: "1",
-          numero: item.dezena || "",
-          bicho: item.bicho || ""
-        }
-      ]
-    }));
-
-    console.log("✅ API alternativa OK");
-    return resultados;
-
-  } catch (err) {
-    console.log("❌ API alternativa falhou:", err.message);
-    return [];
-  }
-}
-// ================= SCRAPING PRO =================
-async function pegarViaScraping() {
-  try {
-    console.log("🌐 Scraping direto funcional...");
-
-    const { data: html } = await axios.get(
-      "https://api.allorigins.win/raw?url=https://resultadofacil.com.br/resultado-do-jogo-do-bicho/",
-      { timeout: 10000 }
-    );
-
-    const $ = cheerio.load(html);
-
-    let lista = [];
-
-    $("table tr").each((i, el) => {
-      const colunas = $(el).find("td");
-
-      if (colunas.length >= 2) {
-        const pos = $(colunas[0]).text().trim();
-        const numero = $(colunas[1]).text().trim();
-
-        if (numero.match(/\d{4}/)) {
-          lista.push({
-            banca: "rio",
-            horario: "",
-            resultados: [{
-              pos,
-              numero,
-              bicho: ""
-            }]
-          });
-        }
-      }
+  dados.forEach(d => {
+    d.resultados.forEach(r => {
+      const bicho = r.bicho || "desconhecido";
+      contagem[bicho] = (contagem[bicho] || 0) + 1;
     });
+  });
 
-    if (lista.length > 0) {
-      console.log("✅ SCRAPING FUNCIONOU DE VERDADE");
-      return lista;
-    }
+  const ordenado = Object.entries(contagem)
+    .sort((a, b) => b[1] - a[1]);
 
-  } catch (err) {
-    console.log("❌ ERRO SCRAPING:", err.message);
-  }
-
-  return [];
+  return {
+    mais_fortes: ordenado.slice(0, 3),
+    menos_frequentes: ordenado.slice(-3)
+  };
 }
-// ================= FALLBACK =================
+
+// ================= LEITURA LOCAL =================
 async function pegarResultadosSeguro() {
   try {
-    console.log("📂 Lendo dados locais...");
-
-    const caminho = path.join(__dirname, "dados.json");
-
     const dados = JSON.parse(fs.readFileSync(caminho, "utf-8"));
 
     if (dados.length > 0) {
-      console.log("✅ DADOS LOCAIS OK");
-      return { fonte: "local", dados };
+      return { fonte: "auto", dados };
     }
 
   } catch (err) {
-    console.log("❌ ERRO AO LER JSON:", err.message);
+    console.log("❌ ERRO JSON:", err.message);
   }
 
   return { fonte: "mock", dados: [] };
@@ -151,39 +97,39 @@ function separar(dados) {
   };
 }
 
+// ================= CRON (AUTOMAÇÃO) =================
+cron.schedule("*/10 * * * *", async () => {
+  console.log("⏰ Atualizando dados automaticamente...");
+
+  try {
+    // 🔥 AQUI você pode depois trocar por API real
+    const novos = JSON.parse(fs.readFileSync(caminho, "utf-8"));
+
+    if (novos.length > 0) {
+      salvarHistorico(novos);
+    }
+
+  } catch (err) {
+    console.log("❌ ERRO CRON:", err.message);
+  }
+});
+
 // ================= ROTA =================
 app.get("/resultados", async (req, res) => {
   try {
-    const agora = Date.now();
-
-    if (cache && agora - ultimaAtualizacao < TEMPO_CACHE) {
-      return res.json(cache);
-    }
-
     const resposta = await pegarResultadosSeguro();
     const dados = resposta.dados;
 
-    console.log("📊 Fonte:", resposta.fonte);
-
     const separado = separar(dados);
+    const analise = analisar(dados);
 
-    separado.rio = ordenar(separado.rio);
-    separado.nacional = ordenar(separado.nacional);
-    separado.look = ordenar(separado.look);
-    separado.federal = ordenar(separado.federal);
-
-    const final = {
+    res.json({
       fonte: resposta.fonte,
-      ...separado
-    };
-
-    cache = final;
-    ultimaAtualizacao = agora;
-
-    res.json(final);
+      ...separado,
+      analise
+    });
 
   } catch (err) {
-    console.log("🔥 ERRO GERAL:", err.message);
     res.status(500).json({ erro: "Falha na API" });
   }
 });
