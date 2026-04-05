@@ -12,36 +12,31 @@ const PORT = process.env.PORT || 3000;
 const __dirname = new URL('.', import.meta.url).pathname;
 const DB = path.join(__dirname, "dados.json");
 
-// cria banco se não existir
+// cria banco
 if (!fs.existsSync(DB)) {
   fs.writeFileSync(DB, "[]");
 }
 
 //////////////////////////////////////////////////
-// 🧠 HORÁRIOS REAIS (RIO)
+// 🧠 HORÁRIOS REAIS
 //////////////////////////////////////////////////
 
 const HORARIOS = ["09:20","11:20","14:20","16:20","18:20","21:20"];
 
 //////////////////////////////////////////////////
-// 📅 FORMATAR DATA REAL
+// 📅 FORMATAR DATA
 //////////////////////////////////////////////////
 
 function formatarData(txt){
-
-  if(!txt) return new Date().toISOString().split("T")[0];
-
   const match = txt.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-
   if(match){
     return `${match[3]}-${match[2]}-${match[1]}`;
   }
-
   return new Date().toISOString().split("T")[0];
 }
 
 //////////////////////////////////////////////////
-// 🌐 PEGAR HISTÓRICO REAL
+// 🌐 SCRAPING HISTÓRICO REAL
 //////////////////////////////////////////////////
 
 async function pegarDados(){
@@ -76,7 +71,6 @@ async function pegarDados(){
         for(let i=2;i<=6;i++){
 
           const bruto = $(col[i]).text().trim();
-
           const match = bruto.match(/(\d{4})-(\d+)/);
 
           if(match){
@@ -135,61 +129,72 @@ function salvar(novos){
 }
 
 //////////////////////////////////////////////////
-// 📊 ANALISAR FORTE
+// 📊 ANALISAR (GERAL + HORÁRIO)
 //////////////////////////////////////////////////
 
 function analisar(dados){
 
-  let contagem = {};
-  let ultimoVisto = {};
+  let geral = {};
+  let porHorario = {};
 
-  dados.forEach((d,idx)=>{
+  dados.forEach(d=>{
+
+    if(!porHorario[d.horario]){
+      porHorario[d.horario] = {};
+    }
+
     d.resultados.forEach(r=>{
 
-      contagem[r.dezena] = (contagem[r.dezena] || 0) + 1;
+      geral[r.dezena] = (geral[r.dezena] || 0) + 1;
 
-      if(!ultimoVisto[r.dezena]){
-        ultimoVisto[r.dezena] = idx;
-      }
+      porHorario[d.horario][r.dezena] =
+        (porHorario[d.horario][r.dezena] || 0) + 1;
 
     });
+
   });
 
-  const mais_fortes = Object.entries(contagem)
+  const mais_fortes = Object.entries(geral)
     .sort((a,b)=>b[1]-a[1])
     .slice(0,10);
 
-  const atrasados = Object.keys(contagem)
-    .sort((a,b)=>ultimoVisto[b] - ultimoVisto[a])
-    .slice(0,10);
+  let rankingHorario = {};
 
-  return { mais_fortes, atrasados };
+  Object.keys(porHorario).forEach(h=>{
+    rankingHorario[h] = Object.entries(porHorario[h])
+      .sort((a,b)=>b[1]-a[1])
+      .slice(0,5);
+  });
+
+  return {
+    mais_fortes,
+    por_horario: rankingHorario
+  };
 }
 
 //////////////////////////////////////////////////
-// 🎯 PALPITE INTELIGENTE
+// 🎯 PALPITE INTELIGENTE POR HORÁRIO
 //////////////////////////////////////////////////
 
 function gerarPalpite(analise){
 
-  const fortes = analise.mais_fortes.map(x=>x[0]);
-  const atrasados = analise.atrasados;
+  const agora = new Date().getHours();
 
-  if(!fortes.length) return ["00","11","22"];
+  let horarioAlvo = "18:20";
 
-  let palpites = [];
+  if(agora < 11) horarioAlvo = "11:20";
+  else if(agora < 14) horarioAlvo = "14:20";
+  else if(agora < 16) horarioAlvo = "16:20";
+  else if(agora < 18) horarioAlvo = "18:20";
+  else horarioAlvo = "21:20";
 
-  for(let i=0;i<3;i++){
+  const lista = analise.por_horario[horarioAlvo] || [];
 
-    if(Math.random() > 0.5){
-      palpites.push(fortes[Math.floor(Math.random()*fortes.length)]);
-    }else{
-      palpites.push(atrasados[Math.floor(Math.random()*atrasados.length)]);
-    }
-
+  if(!lista.length){
+    return ["00","11","22"];
   }
 
-  return palpites;
+  return lista.slice(0,3).map(x=>x[0]);
 }
 
 //////////////////////////////////////////////////
@@ -216,7 +221,7 @@ app.get("/resultados", async (req,res)=>{
     const palpite = gerarPalpite(analise);
 
     res.json({
-      fonte: "real-banca",
+      fonte: "real-banca-pro",
       total: dados.length,
       rio: dados,
       nacional: [],
@@ -242,7 +247,7 @@ app.get("/resultados", async (req,res)=>{
 //////////////////////////////////////////////////
 
 app.get("/", (req,res)=>{
-  res.send("API BANCA PROFISSIONAL 🚀");
+  res.send("API BANCA PRO 🔥");
 });
 
 //////////////////////////////////////////////////
