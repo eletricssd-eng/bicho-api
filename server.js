@@ -9,7 +9,6 @@ const app = express();
 app.use(cors());
 
 const PORT = process.env.PORT || 3000;
-
 const __dirname = new URL('.', import.meta.url).pathname;
 const DB = path.join(__dirname, "dados.json");
 
@@ -17,31 +16,28 @@ const DB = path.join(__dirname, "dados.json");
 // 🧠 HORÁRIOS REAIS
 //////////////////////////////////////////////////
 
-const HORARIOS = {
-  rio: ["09:00","11:00","14:00","16:00","18:00","21:00"],
-  nacional: ["11:00","14:00","16:00","18:00","21:00"],
-  look: ["10:00","12:00","15:00","18:00","20:00"],
-  federal: ["19:00"]
-};
+const HORARIOS = ["09:00","11:00","14:00","16:00","18:00","21:00"];
 
 //////////////////////////////////////////////////
 // 🔄 NORMALIZAR
 //////////////////////////////////////////////////
 
 function normalizar(lista){
+  if(!Array.isArray(lista)) return [];
+
   return lista.map(item=>({
-    banca: item.banca.toLowerCase(),
-    horario: item.horario,
-    data: item.data,
-    resultados: item.resultados.map(r=>({
-      pos: parseInt(r.pos),
-      numero: String(r.numero).padStart(4,"0")
+    banca: (item.banca || "rio").toLowerCase(),
+    horario: item.horario || "00:00",
+    data: item.data || new Date().toISOString().split("T")[0],
+    resultados: (item.resultados || []).map(r=>({
+      pos: parseInt(r.pos || 0),
+      numero: String(r.numero || "").padStart(4,"0")
     }))
   }));
 }
 
 //////////////////////////////////////////////////
-// 🌐 SCRAPING SIMPLES (FUNCIONA SEM BLOQUEIO)
+// 🌐 SCRAPING FUNCIONAL
 //////////////////////////////////////////////////
 
 async function pegarFonte(){
@@ -53,12 +49,11 @@ async function pegarFonte(){
     const $ = cheerio.load(data);
 
     let lista = [];
-
     let horarioIndex = 0;
 
     $("table").each((i, tabela)=>{
 
-      const horario = HORARIOS.rio[horarioIndex] || "00:00";
+      const horario = HORARIOS[horarioIndex] || "00:00";
 
       $(tabela).find("tr").each((i, el)=>{
         const col = $(el).find("td");
@@ -73,10 +68,7 @@ async function pegarFonte(){
               banca: "rio",
               horario,
               data: new Date().toISOString().split("T")[0],
-              resultados: [{
-                pos,
-                numero
-              }]
+              resultados: [{ pos, numero }]
             });
           }
         }
@@ -87,13 +79,14 @@ async function pegarFonte(){
 
     return normalizar(lista);
 
-  }catch{
+  }catch(err){
+    console.log("❌ ERRO SCRAPING:", err.message);
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR HISTÓRICO (7 DIAS)
+// 💾 SALVAR HISTÓRICO
 //////////////////////////////////////////////////
 
 function salvar(dados){
@@ -120,15 +113,16 @@ function salvar(dados){
         };
       }
 
-      if(!mapa[chave].resultados.find(x=>x.pos==r.pos)){
+      if(!mapa[chave].resultados.find(x=>x.pos == r.pos)){
         mapa[chave].resultados.push(r);
       }
+
     });
   });
 
   let final = Object.values(mapa);
 
-  // manter 7 dias
+  // manter só 7 dias
   const limite = new Date();
   limite.setDate(limite.getDate() - 7);
 
@@ -138,49 +132,7 @@ function salvar(dados){
 }
 
 //////////////////////////////////////////////////
-// 📊 ANALISE 7 DIAS
-//////////////////////////////////////////////////
-
-function analisar(dados){
-
-  let contagem = {};
-
-  dados.forEach(d=>{
-    d.resultados.forEach(r=>{
-      const dez = r.numero.slice(-2);
-      contagem[dez] = (contagem[dez] || 0) + 1;
-    });
-  });
-
-  const ordenado = Object.entries(contagem)
-    .sort((a,b)=>b[1]-a[1]);
-
-  return {
-    mais_fortes: ordenado.slice(0,10),
-    atrasados: ordenado.slice(-10)
-  };
-}
-
-//////////////////////////////////////////////////
-// 🎯 PALPITE
-//////////////////////////////////////////////////
-
-function gerarPalpite(analise){
-
-  const base = analise.mais_fortes;
-
-  let palpites = [];
-
-  for(let i=0;i<3;i++){
-    const aleatorio = base[Math.floor(Math.random()*base.length)];
-    palpites.push(aleatorio[0]);
-  }
-
-  return palpites;
-}
-
-//////////////////////////////////////////////////
-// 📊 AGRUPAR RESULTADOS (1º ao 5º)
+// 📊 AGRUPAR (1º ao 5º)
 //////////////////////////////////////////////////
 
 function agrupar(dados){
@@ -212,7 +164,69 @@ function agrupar(dados){
 }
 
 //////////////////////////////////////////////////
-// 🚀 ROTA PRINCIPAL
+// 📊 ANALISAR (SEGURO)
+//////////////////////////////////////////////////
+
+function analisar(dados){
+
+  if(!dados || dados.length === 0){
+    return {
+      mais_fortes: [],
+      atrasados: []
+    };
+  }
+
+  let contagem = {};
+
+  dados.forEach(d=>{
+    d.resultados.forEach(r=>{
+      const dez = r.numero.slice(-2);
+      contagem[dez] = (contagem[dez] || 0) + 1;
+    });
+  });
+
+  const ordenado = Object.entries(contagem)
+    .sort((a,b)=>b[1]-a[1]);
+
+  return {
+    mais_fortes: ordenado.slice(0,10),
+    atrasados: ordenado.slice(-10)
+  };
+}
+
+//////////////////////////////////////////////////
+// 🎯 PALPITE (CORRIGIDO)
+//////////////////////////////////////////////////
+
+function gerarPalpite(analise){
+
+  if(!analise || !analise.mais_fortes || analise.mais_fortes.length === 0){
+    console.log("⚠️ Palpite aleatório (sem dados)");
+
+    let fallback = [];
+    for(let i=0;i<3;i++){
+      fallback.push(Math.floor(Math.random()*100).toString().padStart(2,"0"));
+    }
+    return fallback;
+  }
+
+  const base = analise.mais_fortes;
+
+  let palpites = [];
+
+  for(let i=0;i<3;i++){
+    const aleatorio = base[Math.floor(Math.random()*base.length)];
+
+    if(aleatorio){
+      palpites.push(aleatorio[0]);
+    }
+  }
+
+  return palpites;
+}
+
+//////////////////////////////////////////////////
+// 🚀 ROTA
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req,res)=>{
@@ -230,19 +244,28 @@ app.get("/resultados", async (req,res)=>{
   }catch{}
 
   const agrupados = agrupar(dados);
-
   const analise = analisar(dados);
+  const palpite = gerarPalpite(analise);
 
   res.json({
     fonte: "real",
+    atualizados: novos.length,
     rio: agrupados,
     nacional: agrupados,
     look: agrupados,
     federal: agrupados,
     analise,
-    palpite: gerarPalpite(analise)
+    palpite
   });
 
+});
+
+//////////////////////////////////////////////////
+// TESTE
+//////////////////////////////////////////////////
+
+app.get("/", (req,res)=>{
+  res.send("API ONLINE 🚀");
 });
 
 //////////////////////////////////////////////////
@@ -250,5 +273,5 @@ app.get("/resultados", async (req,res)=>{
 //////////////////////////////////////////////////
 
 app.listen(PORT,"0.0.0.0",()=>{
-  console.log("🚀 API TOP rodando");
+  console.log("🚀 API rodando na porta", PORT);
 });
