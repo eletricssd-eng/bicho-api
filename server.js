@@ -12,166 +12,106 @@ const PORT = process.env.PORT || 3000;
 const __dirname = new URL('.', import.meta.url).pathname;
 const DB = path.join(__dirname, "dados.json");
 
-// cria banco
+// cria banco se não existir
 if (!fs.existsSync(DB)) {
   fs.writeFileSync(DB, "[]");
 }
 
 //////////////////////////////////////////////////
-// 🧠 HORÁRIOS REAIS
+// 🧠 HORÁRIOS REAIS (RIO)
 //////////////////////////////////////////////////
 
 const HORARIOS = ["09:20","11:20","14:20","16:20","18:20","21:20"];
 
 //////////////////////////////////////////////////
-// 🧹 NORMALIZAR
+// 📅 FORMATAR DATA REAL
 //////////////////////////////////////////////////
 
-function normalizar(lista){
-  return lista.map(item => ({
-    banca: "rio",
-    data: item.data || new Date().toISOString().split("T")[0],
-    horario: item.horario || "",
-    resultados: item.resultados.map(r => ({
-      pos: Number(r.pos),
-      numero: String(r.numero).padStart(4,"0"),
-      grupo: r.grupo || "",
-      dezena: String(r.numero).slice(-2)
-    }))
-  }));
+function formatarData(txt){
+
+  if(!txt) return new Date().toISOString().split("T")[0];
+
+  const match = txt.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+
+  if(match){
+    return `${match[3]}-${match[2]}-${match[1]}`;
+  }
+
+  return new Date().toISOString().split("T")[0];
 }
 
 //////////////////////////////////////////////////
-// 🌐 FONTE 1 (SITE HTML)
+// 🌐 PEGAR HISTÓRICO REAL
 //////////////////////////////////////////////////
 
-async function fonte1(){
+async function pegarDados(){
+
   try{
+
     const { data } = await axios.get(
-      "https://api.allorigins.win/raw?url=https://www.ojogodobicho.com/resultadosanteriores.htm"
+      "https://api.allorigins.win/raw?url=https://www.ojogodobicho.com/resultadosanteriores.htm",
+      { timeout: 15000 }
     );
 
     const $ = cheerio.load(data);
-    let lista = [];
+
+    let resultados = [];
     let index = 0;
 
     $("table tr").each((i,el)=>{
+
       const col = $(el).find("td");
 
-      if(col.length >= 5){
+      if(col.length >= 6){
 
-        let resultados = [];
+        const dataTxt = $(col[0]).text().trim();
+
+        const grupoObj = {
+          banca: "rio",
+          data: formatarData(dataTxt),
+          horario: HORARIOS[index % 6],
+          resultados: []
+        };
 
         for(let i=2;i<=6;i++){
-          const txt = $(col[i]).text().trim();
-          const match = txt.match(/\d{4}/);
+
+          const bruto = $(col[i]).text().trim();
+
+          const match = bruto.match(/(\d{4})-(\d+)/);
 
           if(match){
-            resultados.push({
+
+            const milhar = match[1];
+            const grupo = match[2];
+            const dezena = milhar.slice(-2);
+
+            grupoObj.resultados.push({
               pos: i-1,
-              numero: match[0]
+              numero: milhar,
+              grupo,
+              dezena
             });
           }
         }
 
-        if(resultados.length){
-          lista.push({
-            horario: HORARIOS[index % 6],
-            resultados
-          });
+        if(grupoObj.resultados.length){
+          resultados.push(grupoObj);
           index++;
         }
       }
+
     });
 
-    return normalizar(lista);
+    return resultados.slice(0,6);
 
   }catch(e){
-    console.log("❌ fonte1 erro");
+    console.log("❌ ERRO SCRAPING:", e.message);
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🌐 FONTE 2 (API SUA)
-//////////////////////////////////////////////////
-
-async function fonte2(){
-  try{
-    const { data } = await axios.get(
-      "https://bicho-api.onrender.com/resultados"
-    );
-
-    return normalizar(data.rio || []);
-
-  }catch(e){
-    console.log("❌ fonte2 erro");
-    return [];
-  }
-}
-
-//////////////////////////////////////////////////
-// 🌐 FONTE 3 (SCRAPING EXTRA)
-//////////////////////////////////////////////////
-
-async function fonte3(){
-  try{
-    const { data } = await axios.get(
-      "https://api.allorigins.win/raw?url=https://resultadofacil.com.br/resultado-do-jogo-do-bicho/"
-    );
-
-    const $ = cheerio.load(data);
-    let lista = [];
-
-    $("table tr").each((i,el)=>{
-      const col = $(el).find("td");
-
-      if(col.length >= 2){
-        const numero = $(col[1]).text().trim();
-
-        if(numero.match(/\d{4}/)){
-          lista.push({
-            horario: "",
-            resultados: [{
-              pos: 1,
-              numero
-            }]
-          });
-        }
-      }
-    });
-
-    return normalizar(lista);
-
-  }catch(e){
-    console.log("❌ fonte3 erro");
-    return [];
-  }
-}
-
-//////////////////////////////////////////////////
-// 🧠 UNIFICAR (REMOVE DUPLICADOS)
-//////////////////////////////////////////////////
-
-function unificar(fontes){
-
-  const mapa = {};
-
-  fontes.flat().forEach(item=>{
-
-    const chave = item.horario + JSON.stringify(item.resultados);
-
-    if(!mapa[chave]){
-      mapa[chave] = item;
-    }
-
-  });
-
-  return Object.values(mapa);
-}
-
-//////////////////////////////////////////////////
-// 💾 SALVAR
+// 💾 SALVAR (7 DIAS)
 //////////////////////////////////////////////////
 
 function salvar(novos){
@@ -195,103 +135,90 @@ function salvar(novos){
 }
 
 //////////////////////////////////////////////////
-// 📊 ANALISAR
+// 📊 ANALISAR FORTE
 //////////////////////////////////////////////////
 
 function analisar(dados){
 
-  let geral = {};
-  let porHorario = {};
+  let contagem = {};
+  let ultimoVisto = {};
 
-  dados.forEach(d=>{
-
-    if(!porHorario[d.horario]){
-      porHorario[d.horario] = {};
-    }
-
+  dados.forEach((d,idx)=>{
     d.resultados.forEach(r=>{
 
-      geral[r.dezena] = (geral[r.dezena] || 0) + 1;
+      contagem[r.dezena] = (contagem[r.dezena] || 0) + 1;
 
-      porHorario[d.horario][r.dezena] =
-        (porHorario[d.horario][r.dezena] || 0) + 1;
+      if(!ultimoVisto[r.dezena]){
+        ultimoVisto[r.dezena] = idx;
+      }
 
     });
-
   });
 
-  const mais_fortes = Object.entries(geral)
+  const mais_fortes = Object.entries(contagem)
     .sort((a,b)=>b[1]-a[1])
     .slice(0,10);
 
-  let rankingHorario = {};
+  const atrasados = Object.keys(contagem)
+    .sort((a,b)=>ultimoVisto[b] - ultimoVisto[a])
+    .slice(0,10);
 
-  Object.keys(porHorario).forEach(h=>{
-    rankingHorario[h] = Object.entries(porHorario[h])
-      .sort((a,b)=>b[1]-a[1])
-      .slice(0,5);
-  });
-
-  return {
-    mais_fortes,
-    por_horario: rankingHorario
-  };
+  return { mais_fortes, atrasados };
 }
 
 //////////////////////////////////////////////////
-// 🎯 PALPITE
+// 🎯 PALPITE INTELIGENTE
 //////////////////////////////////////////////////
 
 function gerarPalpite(analise){
 
-  const hora = new Date().getHours();
+  const fortes = analise.mais_fortes.map(x=>x[0]);
+  const atrasados = analise.atrasados;
 
-  let alvo = "18:20";
+  if(!fortes.length) return ["00","11","22"];
 
-  if(hora < 11) alvo = "11:20";
-  else if(hora < 14) alvo = "14:20";
-  else if(hora < 16) alvo = "16:20";
-  else if(hora < 18) alvo = "18:20";
-  else alvo = "21:20";
+  let palpites = [];
 
-  const lista = analise.por_horario[alvo] || [];
+  for(let i=0;i<3;i++){
 
-  if(!lista.length) return ["00","11","22"];
+    if(Math.random() > 0.5){
+      palpites.push(fortes[Math.floor(Math.random()*fortes.length)]);
+    }else{
+      palpites.push(atrasados[Math.floor(Math.random()*atrasados.length)]);
+    }
 
-  return lista.slice(0,3).map(x=>x[0]);
+  }
+
+  return palpites;
 }
 
 //////////////////////////////////////////////////
-// 🚀 ROTA
+// 🌐 ROTA PRINCIPAL
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req,res)=>{
 
   try{
 
-    const f1 = await fonte1();
-    const f2 = await fonte2();
-    const f3 = await fonte3();
+    const novos = await pegarDados();
 
-    const dados = unificar([f1,f2,f3]);
-
-    if(dados.length){
-      salvar(dados);
+    if(novos.length){
+      salvar(novos);
     }
 
-    let banco = [];
+    let dados = [];
 
     try{
-      banco = JSON.parse(fs.readFileSync(DB));
+      dados = JSON.parse(fs.readFileSync(DB));
     }catch{}
 
-    const analise = analisar(banco);
+    const analise = analisar(dados);
     const palpite = gerarPalpite(analise);
 
     res.json({
-      fonte: "multi-real",
-      total: banco.length,
-      rio: banco,
+      fonte: "real-banca",
+      total: dados.length,
+      rio: dados,
       nacional: [],
       look: [],
       federal: [],
@@ -303,7 +230,7 @@ app.get("/resultados", async (req,res)=>{
 
     res.json({
       erro: "falha geral",
-      rio:[]
+      rio: []
     });
 
   }
@@ -315,7 +242,7 @@ app.get("/resultados", async (req,res)=>{
 //////////////////////////////////////////////////
 
 app.get("/", (req,res)=>{
-  res.send("API MULTI FONTE 🔥");
+  res.send("API BANCA PROFISSIONAL 🚀");
 });
 
 //////////////////////////////////////////////////
