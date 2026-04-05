@@ -12,26 +12,42 @@ const PORT = process.env.PORT || 3000;
 const __dirname = new URL('.', import.meta.url).pathname;
 const DB = path.join(__dirname, "dados.json");
 
-// cria arquivo se não existir
+// cria banco se não existir
 if (!fs.existsSync(DB)) {
   fs.writeFileSync(DB, "[]");
 }
 
 //////////////////////////////////////////////////
-// 📅 DATA HOJE
+// 🧠 HORÁRIOS REAIS (RIO)
 //////////////////////////////////////////////////
 
-function hoje(){
+const HORARIOS = ["09:20","11:20","14:20","16:20","18:20","21:20"];
+
+//////////////////////////////////////////////////
+// 📅 FORMATAR DATA REAL
+//////////////////////////////////////////////////
+
+function formatarData(txt){
+
+  if(!txt) return new Date().toISOString().split("T")[0];
+
+  const match = txt.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+
+  if(match){
+    return `${match[3]}-${match[2]}-${match[1]}`;
+  }
+
   return new Date().toISOString().split("T")[0];
 }
 
 //////////////////////////////////////////////////
-// 🌐 PEGAR HISTÓRICO REAL (6 DIAS)
+// 🌐 PEGAR HISTÓRICO REAL
 //////////////////////////////////////////////////
 
 async function pegarDados(){
 
   try{
+
     const { data } = await axios.get(
       "https://api.allorigins.win/raw?url=https://www.ojogodobicho.com/resultadosanteriores.htm",
       { timeout: 15000 }
@@ -40,6 +56,7 @@ async function pegarDados(){
     const $ = cheerio.load(data);
 
     let resultados = [];
+    let index = 0;
 
     $("table tr").each((i,el)=>{
 
@@ -47,10 +64,12 @@ async function pegarDados(){
 
       if(col.length >= 6){
 
+        const dataTxt = $(col[0]).text().trim();
+
         const grupoObj = {
           banca: "rio",
-          data: hoje(),
-          horario: "",
+          data: formatarData(dataTxt),
+          horario: HORARIOS[index % 6],
           resultados: []
         };
 
@@ -77,6 +96,7 @@ async function pegarDados(){
 
         if(grupoObj.resultados.length){
           resultados.push(grupoObj);
+          index++;
         }
       }
 
@@ -91,10 +111,10 @@ async function pegarDados(){
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR HISTÓRICO
+// 💾 SALVAR (7 DIAS)
 //////////////////////////////////////////////////
 
-function salvar(dados){
+function salvar(novos){
 
   let antigos = [];
 
@@ -102,9 +122,8 @@ function salvar(dados){
     antigos = JSON.parse(fs.readFileSync(DB));
   }catch{}
 
-  const todos = [...antigos, ...dados];
+  const todos = [...novos, ...antigos];
 
-  // manter últimos 7 dias
   const limite = new Date();
   limite.setDate(limite.getDate() - 7);
 
@@ -116,26 +135,35 @@ function salvar(dados){
 }
 
 //////////////////////////////////////////////////
-// 📊 ANALISAR
+// 📊 ANALISAR FORTE
 //////////////////////////////////////////////////
 
 function analisar(dados){
 
   let contagem = {};
+  let ultimoVisto = {};
 
-  dados.forEach(d=>{
+  dados.forEach((d,idx)=>{
     d.resultados.forEach(r=>{
+
       contagem[r.dezena] = (contagem[r.dezena] || 0) + 1;
+
+      if(!ultimoVisto[r.dezena]){
+        ultimoVisto[r.dezena] = idx;
+      }
+
     });
   });
 
-  const ordenado = Object.entries(contagem)
-    .sort((a,b)=>b[1]-a[1]);
+  const mais_fortes = Object.entries(contagem)
+    .sort((a,b)=>b[1]-a[1])
+    .slice(0,10);
 
-  return {
-    mais_fortes: ordenado.slice(0,10),
-    atrasados: ordenado.slice(-10)
-  };
+  const atrasados = Object.keys(contagem)
+    .sort((a,b)=>ultimoVisto[b] - ultimoVisto[a])
+    .slice(0,10);
+
+  return { mais_fortes, atrasados };
 }
 
 //////////////////////////////////////////////////
@@ -144,13 +172,24 @@ function analisar(dados){
 
 function gerarPalpite(analise){
 
-  if(!analise.mais_fortes.length){
-    return ["00","11","22"];
+  const fortes = analise.mais_fortes.map(x=>x[0]);
+  const atrasados = analise.atrasados;
+
+  if(!fortes.length) return ["00","11","22"];
+
+  let palpites = [];
+
+  for(let i=0;i<3;i++){
+
+    if(Math.random() > 0.5){
+      palpites.push(fortes[Math.floor(Math.random()*fortes.length)]);
+    }else{
+      palpites.push(atrasados[Math.floor(Math.random()*atrasados.length)]);
+    }
+
   }
 
-  return analise.mais_fortes
-    .slice(0,3)
-    .map(x=>x[0]);
+  return palpites;
 }
 
 //////////////////////////////////////////////////
@@ -177,7 +216,7 @@ app.get("/resultados", async (req,res)=>{
     const palpite = gerarPalpite(analise);
 
     res.json({
-      fonte: "real-historico",
+      fonte: "real-banca",
       total: dados.length,
       rio: dados,
       nacional: [],
@@ -203,7 +242,7 @@ app.get("/resultados", async (req,res)=>{
 //////////////////////////////////////////////////
 
 app.get("/", (req,res)=>{
-  res.send("API BANCA ONLINE 🚀");
+  res.send("API BANCA PROFISSIONAL 🚀");
 });
 
 //////////////////////////////////////////////////
@@ -211,5 +250,5 @@ app.get("/", (req,res)=>{
 //////////////////////////////////////////////////
 
 app.listen(PORT, "0.0.0.0", ()=>{
-  console.log("🚀 rodando porta", PORT);
+  console.log("🚀 rodando na porta", PORT);
 });
