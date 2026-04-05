@@ -27,47 +27,37 @@ if (!fs.existsSync(DB)) {
 async function pegarDados(){
   try{
     const { data } = await axios.get(
-      "https://api.allorigins.win/raw?url=https://resultadofacil.com.br/resultado-do-jogo-do-bicho/",
+      "https://api.allorigins.win/raw?url=https://www.resultadofacil.com.br/",
       { timeout: 10000 }
     );
 
     const $ = cheerio.load(data);
 
-    let resultados = [];
+    let lista = [];
 
-    $("table").each((i,tabela)=>{
+    $("td").each((i,el)=>{
+      const texto = $(el).text().trim();
 
-      let grupo = {
-        banca: "rio",
-        horario: ["09:00","11:00","14:00","16:00","18:00","21:00"][i] || "00:00",
-        resultados: []
-      };
-
-      $(tabela).find("tr").each((i,el)=>{
-        const col = $(el).find("td");
-
-        if(col.length >= 2){
-
-          const pos = parseInt($(col[0]).text().trim());
-          const numero = $(col[1]).text().trim();
-
-          if(/\d{4}/.test(numero)){
-            grupo.resultados.push({
-              pos,
-              numero
-            });
-          }
-        }
-      });
-
-      if(grupo.resultados.length){
-        grupo.resultados = grupo.resultados.slice(0,5);
-        resultados.push(grupo);
+      if(/\d{4}/.test(texto)){
+        lista.push(texto);
       }
-
     });
 
-    return resultados;
+    // agrupa 5 resultados
+    let resultado = [];
+
+    for(let i=0;i<lista.length;i+=5){
+      resultado.push({
+        banca: "rio",
+        horario: ["09:00","11:00","14:00","16:00","18:00","21:00"][i/5] || "00:00",
+        resultados: lista.slice(i,i+5).map((n,j)=>({
+          pos: j+1,
+          numero: n
+        }))
+      });
+    }
+
+    return resultado;
 
   }catch(e){
     console.log("ERRO:", e.message);
