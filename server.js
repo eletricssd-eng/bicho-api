@@ -19,70 +19,112 @@ const DB = path.join(__dirname, "dados.json");
 const HORARIOS = ["09:00","11:00","14:00","16:00","18:00","21:00"];
 
 //////////////////////////////////////////////////
-// 🔄 NORMALIZAR
+// 🌐 FONTE 1
 //////////////////////////////////////////////////
 
-function normalizar(lista){
-  if(!Array.isArray(lista)) return [];
-
-  return lista.map(item=>({
-    banca: (item.banca || "rio").toLowerCase(),
-    horario: item.horario || "00:00",
-    data: item.data || new Date().toISOString().split("T")[0],
-    resultados: (item.resultados || []).map(r=>({
-      pos: parseInt(r.pos || 0),
-      numero: String(r.numero || "").padStart(4,"0")
-    }))
-  }));
-}
-
-//////////////////////////////////////////////////
-// 🌐 SCRAPING FUNCIONAL
-//////////////////////////////////////////////////
-
-async function pegarFonte(){
+async function fonte1(){
   try{
     const { data } = await axios.get(
       "https://api.allorigins.win/raw?url=https://resultadofacil.com.br/resultado-do-jogo-do-bicho/"
     );
 
     const $ = cheerio.load(data);
-
     let lista = [];
-    let horarioIndex = 0;
 
-    $("table").each((i, tabela)=>{
+    $("table tr").each((i,el)=>{
+      const col = $(el).find("td");
 
-      const horario = HORARIOS[horarioIndex] || "00:00";
+      if(col.length >= 2){
+        const pos = $(col[0]).text().trim();
+        const numero = $(col[1]).text().trim();
 
-      $(tabela).find("tr").each((i, el)=>{
-        const col = $(el).find("td");
-
-        if(col.length >= 2){
-
-          const pos = $(col[0]).text().trim();
-          const numero = $(col[1]).text().trim();
-
-          if(numero.match(/\d{4}/)){
-            lista.push({
-              banca: "rio",
-              horario,
-              data: new Date().toISOString().split("T")[0],
-              resultados: [{ pos, numero }]
-            });
-          }
+        if(numero.match(/\d{4}/)){
+          lista.push({ pos, numero });
         }
-      });
-
-      horarioIndex++;
+      }
     });
 
-    return normalizar(lista);
+    return lista;
 
-  }catch(err){
-    console.log("❌ ERRO SCRAPING:", err.message);
+  }catch{
     return [];
   }
+}
+
+//////////////////////////////////////////////////
+// 🌐 FONTE 2
+//////////////////////////////////////////////////
+
+async function fonte2(){
+  try{
+    const { data } = await axios.get(
+      "https://api.allorigins.win/raw?url=https://paratodosbrasil.vip"
+    );
+
+    const $ = cheerio.load(data);
+    let lista = [];
+
+    $("li,div").each((i,el)=>{
+      const texto = $(el).text();
+      const match = texto.match(/(\d{1,2})º.*?(\d{4})/);
+
+      if(match){
+        lista.push({ pos: match[1], numero: match[2] });
+      }
+    });
+
+    return lista;
+
+  }catch{
+    return [];
+  }
+}
+
+//////////////////////////////////////////////////
+// 🧠 VALIDAÇÃO (CORE)
+//////////////////////////////////////////////////
+
+function validar(f1,f2){
+
+  const mapa = {};
+
+  f1.forEach(r=>{
+    const chave = `${r.pos}-${r.numero}`;
+    mapa[chave] = (mapa[chave] || 0) + 1;
+  });
+
+  f2.forEach(r=>{
+    const chave = `${r.pos}-${r.numero}`;
+    mapa[chave] = (mapa[chave] || 0) + 1;
+  });
+
+  return Object.entries(mapa)
+    .filter(([k,v]) => v >= 2)
+    .map(([k])=>{
+      const [pos,numero] = k.split("-");
+      return { pos: parseInt(pos), numero };
+    });
+}
+
+//////////////////////////////////////////////////
+// 🚀 COLETAR REAL
+//////////////////////////////////////////////////
+
+async function coletar(){
+
+  const f1 = await fonte1();
+  const f2 = await fonte2();
+
+  const validos = validar(f1,f2);
+
+  if(validos.length === 0) return [];
+
+  return [{
+    banca: "rio",
+    horario: "18:00",
+    data: new Date().toISOString().split("T")[0],
+    resultados: validos.slice(0,5)
+  }];
 }
 
 //////////////////////////////////////////////////
@@ -97,84 +139,21 @@ function salvar(dados){
     antigos = JSON.parse(fs.readFileSync(DB));
   }catch{}
 
-  const mapa = {};
+  const final = [...antigos, ...dados];
 
-  [...antigos, ...dados].forEach(item=>{
-    item.resultados.forEach(r=>{
-
-      const chave = `${item.data}-${item.horario}-${r.pos}`;
-
-      if(!mapa[chave]){
-        mapa[chave] = {
-          banca: item.banca,
-          horario: item.horario,
-          data: item.data,
-          resultados:[]
-        };
-      }
-
-      if(!mapa[chave].resultados.find(x=>x.pos == r.pos)){
-        mapa[chave].resultados.push(r);
-      }
-
-    });
-  });
-
-  let final = Object.values(mapa);
-
-  // manter só 7 dias
   const limite = new Date();
   limite.setDate(limite.getDate() - 7);
 
-  final = final.filter(d=> new Date(d.data) >= limite);
+  const filtrado = final.filter(d => new Date(d.data) >= limite);
 
-  fs.writeFileSync(DB, JSON.stringify(final,null,2));
+  fs.writeFileSync(DB, JSON.stringify(filtrado,null,2));
 }
 
 //////////////////////////////////////////////////
-// 📊 AGRUPAR (1º ao 5º)
-//////////////////////////////////////////////////
-
-function agrupar(dados){
-
-  const mapa = {};
-
-  dados.forEach(item=>{
-    const chave = `${item.data}-${item.horario}`;
-
-    if(!mapa[chave]){
-      mapa[chave] = {
-        banca: item.banca,
-        horario: item.horario,
-        data: item.data,
-        resultados:[]
-      };
-    }
-
-    mapa[chave].resultados.push(...item.resultados);
-  });
-
-  return Object.values(mapa).map(d=>{
-    d.resultados = d.resultados
-      .sort((a,b)=>a.pos-b.pos)
-      .slice(0,5);
-
-    return d;
-  });
-}
-
-//////////////////////////////////////////////////
-// 📊 ANALISAR (SEGURO)
+// 📊 ANALISAR
 //////////////////////////////////////////////////
 
 function analisar(dados){
-
-  if(!dados || dados.length === 0){
-    return {
-      mais_fortes: [],
-      atrasados: []
-    };
-  }
 
   let contagem = {};
 
@@ -189,49 +168,33 @@ function analisar(dados){
     .sort((a,b)=>b[1]-a[1]);
 
   return {
-    mais_fortes: ordenado.slice(0,10),
-    atrasados: ordenado.slice(-10)
+    fortes: ordenado.slice(0,10),
+    fracos: ordenado.slice(-10)
   };
 }
 
 //////////////////////////////////////////////////
-// 🎯 PALPITE (CORRIGIDO)
+// 🎯 PALPITE FORTE
 //////////////////////////////////////////////////
 
-function gerarPalpite(analise){
+function palpiteForte(analise){
 
-  if(!analise || !analise.mais_fortes || analise.mais_fortes.length === 0){
-    console.log("⚠️ Palpite aleatório (sem dados)");
-
-    let fallback = [];
-    for(let i=0;i<3;i++){
-      fallback.push(Math.floor(Math.random()*100).toString().padStart(2,"0"));
-    }
-    return fallback;
+  if(!analise.fortes.length){
+    return ["00","11","22"];
   }
 
-  const base = analise.mais_fortes;
-
-  let palpites = [];
-
-  for(let i=0;i<3;i++){
-    const aleatorio = base[Math.floor(Math.random()*base.length)];
-
-    if(aleatorio){
-      palpites.push(aleatorio[0]);
-    }
-  }
-
-  return palpites;
+  return analise.fortes
+    .slice(0,3)
+    .map(x=>x[0]);
 }
 
 //////////////////////////////////////////////////
-// 🚀 ROTA
+// 🌐 ROTA
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req,res)=>{
 
-  const novos = await pegarFonte();
+  const novos = await coletar();
 
   if(novos.length){
     salvar(novos);
@@ -243,29 +206,16 @@ app.get("/resultados", async (req,res)=>{
     dados = JSON.parse(fs.readFileSync(DB));
   }catch{}
 
-  const agrupados = agrupar(dados);
   const analise = analisar(dados);
-  const palpite = gerarPalpite(analise);
 
   res.json({
-    fonte: "real",
-    atualizados: novos.length,
-    rio: agrupados,
-    nacional: agrupados,
-    look: agrupados,
-    federal: agrupados,
+    fonte: "banca",
+    total: dados.length,
+    rio: dados,
     analise,
-    palpite
+    palpite: palpiteForte(analise)
   });
 
-});
-
-//////////////////////////////////////////////////
-// TESTE
-//////////////////////////////////////////////////
-
-app.get("/", (req,res)=>{
-  res.send("API ONLINE 🚀");
 });
 
 //////////////////////////////////////////////////
@@ -273,5 +223,5 @@ app.get("/", (req,res)=>{
 //////////////////////////////////////////////////
 
 app.listen(PORT,"0.0.0.0",()=>{
-  console.log("🚀 API rodando na porta", PORT);
+  console.log("🚀 BANCA ONLINE");
 });
