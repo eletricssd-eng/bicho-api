@@ -13,13 +13,13 @@ const __dirname = new URL('.', import.meta.url).pathname;
 const DB = path.join(__dirname, "dados.json");
 
 //////////////////////////////////////////////////
-// 🧠 HORÁRIOS REAIS
+// 🧠 HORÁRIOS
 //////////////////////////////////////////////////
 
 const HORARIOS = ["09:00","11:00","14:00","16:00","18:00","21:00"];
 
 //////////////////////////////////////////////////
-// 🌐 FONTE 1
+// 🌐 FONTE 1 (resultadofacil)
 //////////////////////////////////////////////////
 
 async function fonte1(){
@@ -38,7 +38,7 @@ async function fonte1(){
         const pos = $(col[0]).text().trim();
         const numero = $(col[1]).text().trim();
 
-        if(numero.match(/\d{4}/)){
+        if(/\d{4}/.test(numero)){
           lista.push({ pos, numero });
         }
       }
@@ -52,7 +52,7 @@ async function fonte1(){
 }
 
 //////////////////////////////////////////////////
-// 🌐 FONTE 2
+// 🌐 FONTE 2 (paratodos)
 //////////////////////////////////////////////////
 
 async function fonte2(){
@@ -66,7 +66,7 @@ async function fonte2(){
 
     $("li,div").each((i,el)=>{
       const texto = $(el).text();
-      const match = texto.match(/(\d{1,2})º.*?(\d{4})/);
+      const match = texto.match(/(\d{1,2})\D+(\d{4})/);
 
       if(match){
         lista.push({ pos: match[1], numero: match[2] });
@@ -81,29 +81,85 @@ async function fonte2(){
 }
 
 //////////////////////////////////////////////////
-// 🧠 VALIDAÇÃO (CORE)
+// 🌐 FONTE 3 (look/goias estilo)
 //////////////////////////////////////////////////
 
-function validar(f1,f2){
+async function fonte3(){
+  try{
+    const { data } = await axios.get(
+      "https://api.allorigins.win/raw?url=https://www.resultadosdobicho.com/"
+    );
+
+    const $ = cheerio.load(data);
+    let lista = [];
+
+    $("li").each((i,el)=>{
+      const texto = $(el).text();
+      const match = texto.match(/(\d{1,2})\D+(\d{4})/);
+
+      if(match){
+        lista.push({ pos: match[1], numero: match[2] });
+      }
+    });
+
+    return lista;
+
+  }catch{
+    return [];
+  }
+}
+
+//////////////////////////////////////////////////
+// 🌐 FONTE 4 (backup API)
+//////////////////////////////////////////////////
+
+async function fonte4(){
+  try{
+    const { data } = await axios.get(
+      "https://bicho-api.onrender.com/resultados"
+    );
+
+    let lista = [];
+
+    (data.rio || []).forEach(item=>{
+      item.resultados.forEach(r=>{
+        lista.push({
+          pos: r.pos,
+          numero: r.numero
+        });
+      });
+    });
+
+    return lista;
+
+  }catch{
+    return [];
+  }
+}
+
+//////////////////////////////////////////////////
+// 🧠 VALIDAÇÃO INTELIGENTE
+//////////////////////////////////////////////////
+
+function validar(...fontes){
 
   const mapa = {};
 
-  f1.forEach(r=>{
+  fontes.flat().forEach(r=>{
     const chave = `${r.pos}-${r.numero}`;
     mapa[chave] = (mapa[chave] || 0) + 1;
   });
 
-  f2.forEach(r=>{
-    const chave = `${r.pos}-${r.numero}`;
-    mapa[chave] = (mapa[chave] || 0) + 1;
-  });
+  const ordenado = Object.entries(mapa)
+    .sort((a,b)=>b[1]-a[1]);
 
-  return Object.entries(mapa)
-    .filter(([k,v]) => v >= 2)
-    .map(([k])=>{
-      const [pos,numero] = k.split("-");
-      return { pos: parseInt(pos), numero };
-    });
+  return ordenado.slice(0,5).map(([k])=>{
+    const [pos,numero] = k.split("-");
+    return {
+      pos: parseInt(pos),
+      numero
+    };
+  });
 }
 
 //////////////////////////////////////////////////
@@ -112,10 +168,16 @@ function validar(f1,f2){
 
 async function coletar(){
 
-  const f1 = await fonte1();
-  const f2 = await fonte2();
+  const [f1,f2,f3,f4] = await Promise.all([
+    fonte1(),
+    fonte2(),
+    fonte3(),
+    fonte4()
+  ]);
 
-  const validos = validar(f1,f2);
+  console.log("F1:",f1.length,"F2:",f2.length,"F3:",f3.length,"F4:",f4.length);
+
+  const validos = validar(f1,f2,f3,f4);
 
   if(validos.length === 0) return [];
 
@@ -123,12 +185,12 @@ async function coletar(){
     banca: "rio",
     horario: "18:00",
     data: new Date().toISOString().split("T")[0],
-    resultados: validos.slice(0,5)
+    resultados: validos
   }];
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR HISTÓRICO
+// 💾 HISTÓRICO 7 DIAS
 //////////////////////////////////////////////////
 
 function salvar(dados){
@@ -139,18 +201,18 @@ function salvar(dados){
     antigos = JSON.parse(fs.readFileSync(DB));
   }catch{}
 
-  const final = [...antigos, ...dados];
+  const todos = [...antigos, ...dados];
 
   const limite = new Date();
   limite.setDate(limite.getDate() - 7);
 
-  const filtrado = final.filter(d => new Date(d.data) >= limite);
+  const filtrado = todos.filter(d => new Date(d.data) >= limite);
 
   fs.writeFileSync(DB, JSON.stringify(filtrado,null,2));
 }
 
 //////////////////////////////////////////////////
-// 📊 ANALISAR
+// 📊 ANALISE REAL
 //////////////////////////////////////////////////
 
 function analisar(dados){
@@ -168,8 +230,8 @@ function analisar(dados){
     .sort((a,b)=>b[1]-a[1]);
 
   return {
-    fortes: ordenado.slice(0,10),
-    fracos: ordenado.slice(-10)
+    mais_fortes: ordenado.slice(0,10),
+    atrasados: ordenado.slice(-10)
   };
 }
 
@@ -177,13 +239,13 @@ function analisar(dados){
 // 🎯 PALPITE FORTE
 //////////////////////////////////////////////////
 
-function palpiteForte(analise){
+function palpite(analise){
 
-  if(!analise.fortes.length){
+  if(!analise.mais_fortes.length){
     return ["00","11","22"];
   }
 
-  return analise.fortes
+  return analise.mais_fortes
     .slice(0,3)
     .map(x=>x[0]);
 }
@@ -209,11 +271,12 @@ app.get("/resultados", async (req,res)=>{
   const analise = analisar(dados);
 
   res.json({
-    fonte: "banca",
+    fonte: "multi-real",
+    atualizados: novos.length,
     total: dados.length,
     rio: dados,
     analise,
-    palpite: palpiteForte(analise)
+    palpite: palpite(analise)
   });
 
 });
@@ -223,5 +286,5 @@ app.get("/resultados", async (req,res)=>{
 //////////////////////////////////////////////////
 
 app.listen(PORT,"0.0.0.0",()=>{
-  console.log("🚀 BANCA ONLINE");
+  console.log("🚀 SISTEMA BANCA ONLINE");
 });
