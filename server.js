@@ -25,45 +25,60 @@ if (!fs.existsSync(DB)) {
 //////////////////////////////////////////////////
 
 async function pegarDados(){
+
   try{
     const { data } = await axios.get(
-      "https://api.allorigins.win/raw?url=https://www.resultadofacil.com.br/",
+      "https://api.allorigins.win/raw?url=https://www.ojogodobicho.com/resultadosanteriores.htm",
       { timeout: 10000 }
     );
 
     const $ = cheerio.load(data);
 
-    let lista = [];
+    let resultados = [];
 
-    $("td").each((i,el)=>{
-      const texto = $(el).text().trim();
+    $("table tr").each((i,el)=>{
 
-      if(/\d{4}/.test(texto)){
-        lista.push(texto);
+      const col = $(el).find("td");
+
+      if(col.length >= 6){
+
+        const dataTxt = $(col[0]).text().trim();
+
+        const grupo = {
+          banca: "rio",
+          data: dataTxt,
+          horario: "",
+          resultados: []
+        };
+
+        // 1º ao 5º
+        for(let i=2;i<=6;i++){
+          const numero = $(col[i]).text().trim();
+
+          if(/\d{4}/.test(numero)){
+            grupo.resultados.push({
+              pos: i-1,
+              numero
+            });
+          }
+        }
+
+        if(grupo.resultados.length){
+          resultados.push(grupo);
+        }
       }
+
     });
 
-    // agrupa 5 resultados
-    let resultado = [];
-
-    for(let i=0;i<lista.length;i+=5){
-      resultado.push({
-        banca: "rio",
-        horario: ["09:00","11:00","14:00","16:00","18:00","21:00"][i/5] || "00:00",
-        resultados: lista.slice(i,i+5).map((n,j)=>({
-          pos: j+1,
-          numero: n
-        }))
-      });
-    }
-
-    return resultado;
+    // 🔥 pega só últimos 6 dias
+    return resultados.slice(0,6);
 
   }catch(e){
-    console.log("ERRO:", e.message);
+    console.log("ERRO HISTÓRICO:", e.message);
     return [];
   }
 }
+
 //////////////////////////////////////////////////
 // 🚀 ROTA
 //////////////////////////////////////////////////
