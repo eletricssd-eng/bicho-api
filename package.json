@@ -1,24 +1,15 @@
 {
-  "name": "bicho",
+  "name": "bicho-api",
   "version": "1.0.0",
-  "description": "",
   "main": "server.js",
+  "type": "module",
   "scripts": {
     "start": "node server.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "module",
   "dependencies": {
-    "@sparticuz/chromium": "^143.0.4",
-    "axios": "^1.14.0",
-    "cheerio": "^1.2.0",
-    "cors": "^2.8.6",
-    "express": "^5.2.1",
-    "fs": "^0.0.1-security",
-    "node-cron": "^4.2.1",
-    "patch": "^0.0.1",
-    "puppeteer-core": "^24.40.0"
+    "axios": "^1.13.6",
+    "cheerio": "^1.0.0",
+    "cors": "^2.8.5",
+    "express": "^4.18.2"
   }
 }
