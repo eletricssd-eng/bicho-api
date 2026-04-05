@@ -2,281 +2,253 @@ import express from "express";
 import axios from "axios";
 import cors from "cors";
 import * as cheerio from "cheerio";
-import puppeteer from "puppeteer-core";
-import chromium from "@sparticuz/chromium";
+import fs from "fs";
+import path from "path";
 
 const app = express();
 app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
+const __dirname = new URL('.', import.meta.url).pathname;
+const DB = path.join(__dirname, "dados.json");
+
 //////////////////////////////////////////////////
-// 🧠 ORDEM HORÁRIOS
+// 🧠 HORÁRIOS REAIS
 //////////////////////////////////////////////////
 
-const ORDEM = ["09","10","11","12","14","15","16","18","19","21"];
-
-function ordenar(lista){
-  return lista.sort((a,b)=>{
-    return ORDEM.indexOf(a.horario?.slice(0,2)) -
-           ORDEM.indexOf(b.horario?.slice(0,2));
-  });
-}
+const HORARIOS = {
+  rio: ["09:00","11:00","14:00","16:00","18:00","21:00"],
+  nacional: ["11:00","14:00","16:00","18:00","21:00"],
+  look: ["10:00","12:00","15:00","18:00","20:00"],
+  federal: ["19:00"]
+};
 
 //////////////////////////////////////////////////
 // 🔄 NORMALIZAR
 //////////////////////////////////////////////////
 
 function normalizar(lista){
-  if(!Array.isArray(lista)) return [];
-
   return lista.map(item=>({
-    banca: item.banca || item.bank || "rio",
-    horario: item.horario || item.time || "",
-    resultados: (item.resultados || item.results || []).map(r=>({
-      pos: parseInt(r.pos || r.position),
-      numero: String(r.numero || r.number),
-      bicho: r.bicho || r.animal || ""
+    banca: item.banca.toLowerCase(),
+    horario: item.horario,
+    data: item.data,
+    resultados: item.resultados.map(r=>({
+      pos: parseInt(r.pos),
+      numero: String(r.numero).padStart(4,"0")
     }))
   }));
 }
 
 //////////////////////////////////////////////////
-// 🌐 CENTRAL DO BICHO (PUPPETEER)
+// 🌐 SCRAPING SIMPLES (FUNCIONA SEM BLOQUEIO)
 //////////////////////////////////////////////////
 
-async function pegarCentral(){
-  let browser;
-
-  try{
-    browser = await puppeteer.launch({
-      args: chromium.args,
-      executablePath: await chromium.executablePath(),
-      headless: true
-    });
-
-    const page = await browser.newPage();
-
-    await page.goto("https://app.centraldobichobrasil.com/resultados", {
-      waitUntil: "networkidle2",
-      timeout: 30000
-    });
-
-    const dados = await page.evaluate(()=>{
-      const lista = [];
-
-      document.querySelectorAll("*").forEach(el=>{
-        const texto = el.innerText || "";
-
-        const match = texto.match(/(\d{1,2})º\s*(\d{4})/);
-
-        if(match){
-          lista.push({
-            banca: "rio",
-            horario: "",
-            resultados:[{
-              pos: match[1],
-              numero: match[2],
-              bicho:""
-            }]
-          });
-        }
-      });
-
-      return lista;
-    });
-
-    await browser.close();
-
-    return normalizar(dados);
-
-  }catch(e){
-    if(browser) await browser.close();
-    return [];
-  }
-}
-
-//////////////////////////////////////////////////
-// 🌐 PARATODOS (SCRAPING)
-//////////////////////////////////////////////////
-
-async function pegarParatodos(){
+async function pegarFonte(){
   try{
     const { data } = await axios.get(
-      "https://api.allorigins.win/raw?url=https://paratodosbrasil.vip"
+      "https://api.allorigins.win/raw?url=https://resultadofacil.com.br/resultado-do-jogo-do-bicho/"
     );
 
     const $ = cheerio.load(data);
 
     let lista = [];
 
-    $("li, div").each((i,el)=>{
-      const texto = $(el).text();
+    let horarioIndex = 0;
 
-      const match = texto.match(/(\d{1,2})º.*?(\d{4})/);
+    $("table").each((i, tabela)=>{
 
-      if(match){
-        lista.push({
-          banca:"rio",
-          horario:"",
-          resultados:[{
-            pos: match[1],
-            numero: match[2],
-            bicho:""
-          }]
-        });
-      }
+      const horario = HORARIOS.rio[horarioIndex] || "00:00";
+
+      $(tabela).find("tr").each((i, el)=>{
+        const col = $(el).find("td");
+
+        if(col.length >= 2){
+
+          const pos = $(col[0]).text().trim();
+          const numero = $(col[1]).text().trim();
+
+          if(numero.match(/\d{4}/)){
+            lista.push({
+              banca: "rio",
+              horario,
+              data: new Date().toISOString().split("T")[0],
+              resultados: [{
+                pos,
+                numero
+              }]
+            });
+          }
+        }
+      });
+
+      horarioIndex++;
     });
 
     return normalizar(lista);
 
-  }catch(e){
+  }catch{
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🌐 API BACKUP
+// 💾 SALVAR HISTÓRICO (7 DIAS)
 //////////////////////////////////////////////////
 
-async function pegarAPI(){
+function salvar(dados){
+
+  let antigos = [];
+
   try{
-    const { data } = await axios.get(
-      "https://bicho-api.onrender.com/resultados"
-    );
+    antigos = JSON.parse(fs.readFileSync(DB));
+  }catch{}
 
-    return normalizar(data.rio || []);
-
-  }catch(e){
-    return [];
-  }
-}
-
-//////////////////////////////////////////////////
-// 🧠 UNIFICAR + LIMPAR
-//////////////////////////////////////////////////
-
-function unificar(fontes){
   const mapa = {};
 
-  fontes.flat().forEach(item=>{
+  [...antigos, ...dados].forEach(item=>{
     item.resultados.forEach(r=>{
 
-      const chave = `${item.horario}-${r.pos}`;
+      const chave = `${item.data}-${item.horario}-${r.pos}`;
 
       if(!mapa[chave]){
         mapa[chave] = {
           banca: item.banca,
           horario: item.horario,
+          data: item.data,
           resultados:[]
         };
       }
 
-      const existe = mapa[chave].resultados.find(x=>x.numero === r.numero);
-
-      if(!existe){
+      if(!mapa[chave].resultados.find(x=>x.pos==r.pos)){
         mapa[chave].resultados.push(r);
       }
-
     });
   });
 
-  return Object.values(mapa);
+  let final = Object.values(mapa);
+
+  // manter 7 dias
+  const limite = new Date();
+  limite.setDate(limite.getDate() - 7);
+
+  final = final.filter(d=> new Date(d.data) >= limite);
+
+  fs.writeFileSync(DB, JSON.stringify(final,null,2));
 }
 
 //////////////////////////////////////////////////
-// 🧠 CONFIANÇA
+// 📊 ANALISE 7 DIAS
 //////////////////////////////////////////////////
 
-function confianca(qtd){
-  if(qtd >= 3) return "alta";
-  if(qtd === 2) return "media";
-  return "baixa";
-}
+function analisar(dados){
 
-//////////////////////////////////////////////////
-// 🚀 CORE
-//////////////////////////////////////////////////
+  let contagem = {};
 
-async function pegarResultados(){
-  let fontes = [];
-  let usadas = 0;
+  dados.forEach(d=>{
+    d.resultados.forEach(r=>{
+      const dez = r.numero.slice(-2);
+      contagem[dez] = (contagem[dez] || 0) + 1;
+    });
+  });
 
-  const central = await pegarCentral();
-  if(central.length){
-    fontes.push(central);
-    usadas++;
-  }
-
-  const para = await pegarParatodos();
-  if(para.length){
-    fontes.push(para);
-    usadas++;
-  }
-
-  const api = await pegarAPI();
-  if(api.length){
-    fontes.push(api);
-    usadas++;
-  }
-
-  if(fontes.length === 0){
-    return { fonte:"mock", confianca:"zero", dados:[] };
-  }
+  const ordenado = Object.entries(contagem)
+    .sort((a,b)=>b[1]-a[1]);
 
   return {
-    fonte:"multi",
-    confianca: confianca(usadas),
-    dados: unificar(fontes)
+    mais_fortes: ordenado.slice(0,10),
+    atrasados: ordenado.slice(-10)
   };
 }
 
 //////////////////////////////////////////////////
-// 📊 SEPARAR
+// 🎯 PALPITE
 //////////////////////////////////////////////////
 
-function separar(dados){
-  return {
-    rio: ordenar(dados),
-    nacional: ordenar(dados),
-    look: ordenar(dados),
-    federal: ordenar(dados)
-  };
+function gerarPalpite(analise){
+
+  const base = analise.mais_fortes;
+
+  let palpites = [];
+
+  for(let i=0;i<3;i++){
+    const aleatorio = base[Math.floor(Math.random()*base.length)];
+    palpites.push(aleatorio[0]);
+  }
+
+  return palpites;
 }
 
 //////////////////////////////////////////////////
-// 🌐 ROTA
+// 📊 AGRUPAR RESULTADOS (1º ao 5º)
+//////////////////////////////////////////////////
+
+function agrupar(dados){
+
+  const mapa = {};
+
+  dados.forEach(item=>{
+    const chave = `${item.data}-${item.horario}`;
+
+    if(!mapa[chave]){
+      mapa[chave] = {
+        banca: item.banca,
+        horario: item.horario,
+        data: item.data,
+        resultados:[]
+      };
+    }
+
+    mapa[chave].resultados.push(...item.resultados);
+  });
+
+  return Object.values(mapa).map(d=>{
+    d.resultados = d.resultados
+      .sort((a,b)=>a.pos-b.pos)
+      .slice(0,5);
+
+    return d;
+  });
+}
+
+//////////////////////////////////////////////////
+// 🚀 ROTA PRINCIPAL
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req,res)=>{
-  try{
 
-    const r = await pegarResultados();
-    const dados = separar(r.dados);
+  const novos = await pegarFonte();
 
-    res.json({
-      fonte: r.fonte,
-      confianca: r.confianca,
-      ...dados
-    });
-
-  }catch(e){
-    res.status(500).json({ erro:"falha geral" });
+  if(novos.length){
+    salvar(novos);
   }
-});
 
-//////////////////////////////////////////////////
-// TESTE
-//////////////////////////////////////////////////
+  let dados = [];
 
-app.get("/", (req,res)=>{
-  res.send("API ONLINE 🚀");
+  try{
+    dados = JSON.parse(fs.readFileSync(DB));
+  }catch{}
+
+  const agrupados = agrupar(dados);
+
+  const analise = analisar(dados);
+
+  res.json({
+    fonte: "real",
+    rio: agrupados,
+    nacional: agrupados,
+    look: agrupados,
+    federal: agrupados,
+    analise,
+    palpite: gerarPalpite(analise)
+  });
+
 });
 
 //////////////////////////////////////////////////
 // START
 //////////////////////////////////////////////////
 
-app.listen(PORT, "0.0.0.0", ()=>{
-  console.log("🚀 rodando na porta", PORT);
+app.listen(PORT,"0.0.0.0",()=>{
+  console.log("🚀 API TOP rodando");
 });
