@@ -33,32 +33,47 @@ async function pegarDados(){
 
     const $ = cheerio.load(data);
 
-    let lista = [];
+    let resultados = [];
 
-    $("table tr").each((i,el)=>{
-      const col = $(el).find("td");
+    $("table").each((i,tabela)=>{
 
-      if(col.length >= 2){
-        const pos = $(col[0]).text().trim();
-        const numero = $(col[1]).text().trim();
+      let grupo = {
+        banca: "rio",
+        horario: ["09:00","11:00","14:00","16:00","18:00","21:00"][i] || "00:00",
+        resultados: []
+      };
 
-        if(/\d{4}/.test(numero)){
-          lista.push({
-            pos: parseInt(pos),
-            numero
-          });
+      $(tabela).find("tr").each((i,el)=>{
+        const col = $(el).find("td");
+
+        if(col.length >= 2){
+
+          const pos = parseInt($(col[0]).text().trim());
+          const numero = $(col[1]).text().trim();
+
+          if(/\d{4}/.test(numero)){
+            grupo.resultados.push({
+              pos,
+              numero
+            });
+          }
         }
+      });
+
+      if(grupo.resultados.length){
+        grupo.resultados = grupo.resultados.slice(0,5);
+        resultados.push(grupo);
       }
+
     });
 
-    return lista.slice(0,5);
+    return resultados;
 
   }catch(e){
-    console.log("ERRO FONTE:", e.message);
+    console.log("ERRO:", e.message);
     return [];
   }
 }
-
 //////////////////////////////////////////////////
 // 🚀 ROTA
 //////////////////////////////////////////////////
@@ -69,20 +84,20 @@ app.get("/resultados", async (req,res)=>{
     const dados = await pegarDados();
 
     res.json({
-      fonte: "segura",
-      total: dados.length,
-      resultados: dados
+      fonte: "real",
+      rio: dados,
+      nacional: [],
+      look: [],
+      federal: []
     });
 
   }catch(e){
-    console.log("ERRO ROTA:", e.message);
-
     res.json({
-      erro: "falha controlada"
+      fonte: "erro",
+      rio: []
     });
   }
 });
-
 //////////////////////////////////////////////////
 // TESTE
 //////////////////////////////////////////////////
