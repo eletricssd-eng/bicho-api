@@ -15,13 +15,13 @@ const DB = path.join(__dirname, "dados.json");
 if (!fs.existsSync(DB)) fs.writeFileSync(DB, "[]");
 
 //////////////////////////////////////////////////
-// 🧠 HORÁRIOS REAIS
+// 🧠 HORÁRIOS
 //////////////////////////////////////////////////
 
 const HORARIOS = ["09:20","11:20","14:20","16:20","18:20","21:20"];
 
 //////////////////////////////////////////////////
-// 📅 EXTRAIR DATA REAL
+// 📅 DATA
 //////////////////////////////////////////////////
 
 function extrairData(texto){
@@ -41,20 +41,22 @@ function extrairData(texto){
 //////////////////////////////////////////////////
 
 function normalizar(lista, banca){
-  return lista.map(item => ({
-    banca,
-    data: item.data,
-    horario: item.horario,
-    resultados: item.resultados.map(r => ({
-      pos: Number(r.pos),
-      numero: String(r.numero).padStart(4,"0"),
-      dezena: String(r.numero).slice(-2)
-    }))
-  }));
+  return lista
+    .filter(x => x.data) // 🔥 remove sem data
+    .map(item => ({
+      banca,
+      data: item.data,
+      horario: item.horario || "",
+      resultados: item.resultados.map(r => ({
+        pos: Number(r.pos),
+        numero: String(r.numero).padStart(4,"0"),
+        dezena: String(r.numero).slice(-2)
+      }))
+    }));
 }
 
 //////////////////////////////////////////////////
-// 🌐 FONTE RIO
+// 🌐 FONTE 1 (PRINCIPAL)
 //////////////////////////////////////////////////
 
 async function fonteRio(){
@@ -103,13 +105,13 @@ async function fonteRio(){
     return normalizar(lista,"rio");
 
   }catch{
-    console.log("❌ erro rio");
+    console.log("❌ erro fonte1");
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🌐 FONTE API
+// 🌐 FONTE 2 (API)
 //////////////////////////////////////////////////
 
 async function fonteAPI(){
@@ -121,12 +123,13 @@ async function fonteAPI(){
     return normalizar(data.rio || [],"rio");
 
   }catch{
+    console.log("❌ erro fonte2");
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🌐 FONTE EXTRA
+// 🌐 FONTE 3 (EXTRA)
 //////////////////////////////////////////////////
 
 async function fonteExtra(){
@@ -157,12 +160,13 @@ async function fonteExtra(){
     return normalizar(lista,"rio");
 
   }catch{
+    console.log("❌ erro fonte3");
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🔥 VALIDAÇÃO CRUZADA
+// 🔥 VALIDAÇÃO FLEXÍVEL
 //////////////////////////////////////////////////
 
 function validarResultados(fontes){
@@ -172,7 +176,7 @@ function validarResultados(fontes){
   fontes.flat().forEach(item=>{
     item.resultados.forEach(r=>{
 
-      const chave = `${item.data}-${item.horario}-${r.pos}-${r.dezena}`;
+      const chave = `${item.data}-${r.pos}-${r.dezena}`;
 
       if(!mapa[chave]){
         mapa[chave] = {
@@ -190,7 +194,7 @@ function validarResultados(fontes){
     });
   });
 
-  return Object.values(mapa).filter(x => x.confirmacoes >= 2);
+  return Object.values(mapa);
 }
 
 //////////////////////////////////////////////////
@@ -202,18 +206,21 @@ function agrupar(lista){
   const mapa = {};
 
   lista.forEach(item=>{
-    const chave = item.data + "-" + item.horario;
+
+    const chave = item.data + "-" + (item.horario || "00:00");
 
     if(!mapa[chave]){
       mapa[chave] = {
         banca: item.banca,
         data: item.data,
-        horario: item.horario,
-        resultados: []
+        horario: item.horario || "",
+        resultados: [],
+        confianca: item.confirmacoes
       };
     }
 
     mapa[chave].resultados.push(...item.resultados);
+
   });
 
   return Object.values(mapa);
@@ -285,7 +292,14 @@ app.get("/resultados", async (req,res)=>{
     const f3 = await fonteExtra();
 
     const validados = validarResultados([f1,f2,f3]);
-    const dados = agrupar(validados);
+
+    let dados = agrupar(validados);
+
+    // 🔥 fallback se ficar vazio
+    if(!dados.length){
+      console.log("⚠️ fallback ativado");
+      dados = f1.length ? f1 : f2.length ? f2 : f3;
+    }
 
     if(dados.length) salvar(dados);
 
@@ -301,7 +315,7 @@ app.get("/resultados", async (req,res)=>{
     const palpite = gerarPalpite(analise);
 
     res.json({
-      fonte: "banca-validada",
+      fonte: "banca-estavel",
       total: banco.length,
       rio,
       analise,
