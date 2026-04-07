@@ -33,80 +33,126 @@ function hoje(){
 }
 
 //////////////////////////////////////////////////
+// 🧠 DETECTAR DATA REAL
+//////////////////////////////////////////////////
+
+function extrairData(item){
+  return item.date || item.data || item.created_at?.slice(0,10) || hoje();
+}
+
+//////////////////////////////////////////////////
 // 🧹 NORMALIZAR
 //////////////////////////////////////////////////
 
-function normalizar(lista, banca){
+function normalizar(lista){
 
   if(!Array.isArray(lista)) return [];
 
   return lista.map(item => ({
-    banca: banca || "rio",
-    data: item.date || item.data || hoje(),
+
+    banca: item.banca || item.bank || "",
+
+    data: extrairData(item),
+
     horario: item.time || item.horario || "",
+
     resultados: (item.results || item.resultados || []).map((r,i)=>({
-      pos: r.pos || r.position || i+1,
-      numero: String(r.number || r.numero || "0000").padStart(4,"0"),
-      dezena: String(r.number || r.numero || "0000").slice(-2)
+
+      pos: Number(r.pos || r.position || i+1),
+
+      numero: String(r.number || r.numero || "0000")
+        .replace(/\D/g,"")
+        .padStart(4,"0"),
+
+      dezena: String(r.number || r.numero || "0000")
+        .replace(/\D/g,"")
+        .slice(-2)
     }))
+
   }));
 }
 
 //////////////////////////////////////////////////
-// 🌐 FONTE PRINCIPAL
+// 🌐 MULTI FONTES REAIS
 //////////////////////////////////////////////////
 
-async function fonte1(){
+async function pegarDados(){
+
+  let lista = [];
+
   try{
     const { data } = await axios.get(
       "https://api.allorigins.win/raw?url=https://app.centraldobichobrasil.com/api/results",
       { timeout: 8000 }
     );
-    return normalizar(data,"rio");
+
+    lista.push(...normalizar(data));
+
   }catch{
-    console.log("❌ fonte1 falhou");
-    return [];
+    console.log("❌ central falhou");
   }
-}
 
-//////////////////////////////////////////////////
-// 🌐 BACKUP
-//////////////////////////////////////////////////
-
-async function fonte2(){
   try{
     const { data } = await axios.get(
       "https://bicho-api.onrender.com/resultados",
       { timeout: 8000 }
     );
-    return normalizar(data.rio || [],"rio");
+
+    lista.push(...normalizar(data.rio || []));
+
   }catch{
-    console.log("❌ fonte2 falhou");
-    return [];
+    console.log("❌ backup falhou");
   }
+
+  return lista;
 }
 
 //////////////////////////////////////////////////
-// 🧠 APLICAR BANCA + HORÁRIO
+// 🧠 DETECTAR BANCA POR HORÁRIO
 //////////////////////////////////////////////////
 
-function aplicarBancaHorario(lista){
+function detectarBancaPorHorario(horario){
 
-  let contador = {
+  if(!horario) return "rio";
+
+  for(const banca in BANCAS){
+    if(BANCAS[banca].includes(horario)){
+      return banca;
+    }
+  }
+
+  return "rio";
+}
+
+//////////////////////////////////////////////////
+// 🧠 ORGANIZAR DADOS CORRETAMENTE
+//////////////////////////////////////////////////
+
+function organizar(lista){
+
+  let contadores = {
     rio:0, nacional:0, look:0, federal:0
   };
 
   return lista.map(item=>{
 
-    let banca = item.banca || "rio";
+    let banca = item.banca;
+
+    // se não veio banca → detectar
+    if(!banca){
+      banca = detectarBancaPorHorario(item.horario);
+    }
 
     if(!BANCAS[banca]) banca = "rio";
 
-    const horarios = BANCAS[banca];
+    let horario = item.horario;
 
-    const horario = item.horario || horarios[contador[banca] % horarios.length];
-
-    contador[banca]++;
+    // se não veio horário → gerar sequencial REAL
+    if(!horario){
+      const horarios = BANCAS[banca];
+      horario = horarios[contadores[banca] % horarios.length];
+      contadores[banca]++;
+    }
 
     return {
       ...item,
@@ -117,7 +163,7 @@ function aplicarBancaHorario(lista){
 }
 
 //////////////////////////////////////////////////
-// 🔁 REMOVER DUPLICADOS
+// 🔁 REMOVER DUPLICADOS (CORRIGIDO)
 //////////////////////////////////////////////////
 
 function removerDuplicados(lista){
@@ -125,11 +171,17 @@ function removerDuplicados(lista){
   const mapa = {};
 
   lista.forEach(item=>{
-    const chave = item.data + "-" + item.banca + "-" + item.horario;
 
-    if(!mapa[chave]){
-      mapa[chave] = item;
-    }
+    const chave =
+      item.data +
+      "-" +
+      item.banca +
+      "-" +
+      item.horario +
+      "-" +
+      item.resultados.map(r=>r.numero).join("");
+
+    mapa[chave] = item;
   });
 
   return Object.values(mapa);
@@ -149,7 +201,7 @@ function salvar(novos){
 
   let todos = [...novos, ...antigos];
 
-  todos = aplicarBancaHorario(todos);
+  todos = organizar(todos);
   todos = removerDuplicados(todos);
 
   const limite = new Date();
@@ -213,11 +265,7 @@ app.get("/resultados", async (req,res)=>{
 
   try{
 
-    let dados = await fonte1();
-
-    if(!dados.length){
-      dados = await fonte2();
-    }
+    const dados = await pegarDados();
 
     if(dados.length){
       salvar(dados);
@@ -235,7 +283,7 @@ app.get("/resultados", async (req,res)=>{
     const palpite = gerarPalpite(analise);
 
     res.json({
-      fonte: "banca-real",
+      fonte: "real-banca-corrigido",
       total: banco.length,
       ...separados,
       analise,
