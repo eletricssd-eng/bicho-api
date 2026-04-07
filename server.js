@@ -12,9 +12,7 @@ const PORT = process.env.PORT || 3000;
 const __dirname = new URL('.', import.meta.url).pathname;
 const DB = path.join(__dirname, "dados.json");
 
-if (!fs.existsSync(DB)) {
-  fs.writeFileSync(DB, "[]");
-}
+if (!fs.existsSync(DB)) fs.writeFileSync(DB, "[]");
 
 //////////////////////////////////////////////////
 // 🧠 HORÁRIOS REAIS
@@ -23,30 +21,25 @@ if (!fs.existsSync(DB)) {
 const HORARIOS = ["09:20","11:20","14:20","16:20","18:20","21:20"];
 
 //////////////////////////////////////////////////
-// 🧠 DETECTAR BANCA
+// 📅 DATA REAL
 //////////////////////////////////////////////////
 
-function detectarBanca(texto){
-  texto = (texto || "").toLowerCase();
-
-  if(texto.includes("nacional")) return "nacional";
-  if(texto.includes("look") || texto.includes("goias")) return "look";
-  if(texto.includes("federal")) return "federal";
-  if(texto.includes("rio")) return "rio";
-
-  return "rio";
+function extrairData(texto){
+  const match = texto.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  if(match) return `${match[3]}-${match[2]}-${match[1]}`;
+  return new Date().toISOString().split("T")[0];
 }
 
 //////////////////////////////////////////////////
 // 🧹 NORMALIZAR
 //////////////////////////////////////////////////
 
-function normalizar(lista){
+function normalizar(lista, banca){
   return lista.map(item => ({
-    banca: detectarBanca(item.banca || item.texto || ""),
-    data: item.data || new Date().toISOString().split("T")[0],
-    horario: item.horario || "",
-    resultados: (item.resultados || []).map(r => ({
+    banca,
+    data: item.data,
+    horario: item.horario,
+    resultados: item.resultados.map(r => ({
       pos: Number(r.pos),
       numero: String(r.numero).padStart(4,"0"),
       grupo: r.grupo || "",
@@ -56,14 +49,13 @@ function normalizar(lista){
 }
 
 //////////////////////////////////////////////////
-// 🌐 FONTE 1 (PRINCIPAL - HTML)
+// 🌐 RIO (HTML REAL)
 //////////////////////////////////////////////////
 
-async function fonte1(){
+async function fonteRio(){
   try{
     const { data } = await axios.get(
-      "https://api.allorigins.win/raw?url=https://www.ojogodobicho.com/resultadosanteriores.htm",
-      { timeout: 15000 }
+      "https://api.allorigins.win/raw?url=https://www.ojogodobicho.com/resultadosanteriores.htm"
     );
 
     const $ = cheerio.load(data);
@@ -73,7 +65,10 @@ async function fonte1(){
     $("table tr").each((i,el)=>{
       const col = $(el).find("td");
 
-      if(col.length >= 5){
+      if(col.length >= 6){
+
+        const dataTxt = $(col[0]).text().trim();
+        const dataReal = extrairData(dataTxt);
 
         let resultados = [];
 
@@ -91,7 +86,7 @@ async function fonte1(){
 
         if(resultados.length === 5){
           lista.push({
-            banca: "rio",
+            data: dataReal,
             horario: HORARIOS[index % 6],
             resultados
           });
@@ -100,37 +95,48 @@ async function fonte1(){
       }
     });
 
-    return normalizar(lista);
+    return normalizar(lista,"rio");
 
   }catch(e){
-    console.log("❌ fonte1 erro");
+    console.log("❌ rio erro");
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🌐 FONTE 2 (API BACKUP)
+// 🌐 NACIONAL (API)
 //////////////////////////////////////////////////
 
-async function fonte2(){
+async function fonteNacional(){
   try{
     const { data } = await axios.get(
-      "https://bicho-api.onrender.com/resultados"
+      "https://api.allorigins.win/raw?url=https://app.centraldobichobrasil.com/api/results"
     );
 
-    return normalizar(data.rio || []);
+    if(!data || !data.length) return [];
+
+    const lista = data.map(item => ({
+      data: item.date,
+      horario: item.time || "",
+      resultados: item.results.map((r,i)=>({
+        pos: i+1,
+        numero: r.number
+      }))
+    }));
+
+    return normalizar(lista,"nacional");
 
   }catch(e){
-    console.log("❌ fonte2 erro");
+    console.log("❌ nacional erro");
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🌐 FONTE 3 (SCRAPING EXTRA)
+// 🌐 LOOK (SCRAPING)
 //////////////////////////////////////////////////
 
-async function fonte3(){
+async function fonteLook(){
   try{
     const { data } = await axios.get(
       "https://api.allorigins.win/raw?url=https://resultadofacil.com.br/resultado-do-jogo-do-bicho/"
@@ -147,9 +153,9 @@ async function fonte3(){
 
         if(numero.match(/\d{4}/)){
           lista.push({
-            banca: "rio",
+            data: new Date().toISOString().split("T")[0],
             horario: "",
-            resultados: [{
+            resultados:[{
               pos: 1,
               numero
             }]
@@ -158,12 +164,20 @@ async function fonte3(){
       }
     });
 
-    return normalizar(lista);
+    return normalizar(lista,"look");
 
   }catch(e){
-    console.log("❌ fonte3 erro");
+    console.log("❌ look erro");
     return [];
   }
+}
+
+//////////////////////////////////////////////////
+// 🌐 FEDERAL (fallback simples)
+//////////////////////////////////////////////////
+
+async function fonteFederal(){
+  return [];
 }
 
 //////////////////////////////////////////////////
@@ -196,41 +210,22 @@ function salvar(novos){
 
 function analisar(dados){
 
-  let geral = {};
+  let mapa = {};
   let porHorario = {};
 
   dados.forEach(d=>{
-
-    if(!porHorario[d.horario]){
-      porHorario[d.horario] = {};
-    }
+    if(!porHorario[d.horario]) porHorario[d.horario] = {};
 
     d.resultados.forEach(r=>{
-
-      geral[r.dezena] = (geral[r.dezena] || 0) + 1;
-
+      mapa[r.dezena] = (mapa[r.dezena] || 0) + 1;
       porHorario[d.horario][r.dezena] =
         (porHorario[d.horario][r.dezena] || 0) + 1;
-
     });
-
-  });
-
-  const mais_fortes = Object.entries(geral)
-    .sort((a,b)=>b[1]-a[1])
-    .slice(0,10);
-
-  let rankingHorario = {};
-
-  Object.keys(porHorario).forEach(h=>{
-    rankingHorario[h] = Object.entries(porHorario[h])
-      .sort((a,b)=>b[1]-a[1])
-      .slice(0,5);
   });
 
   return {
-    mais_fortes,
-    por_horario: rankingHorario
+    mais_fortes: Object.entries(mapa).sort((a,b)=>b[1]-a[1]).slice(0,10),
+    por_horario: porHorario
   };
 }
 
@@ -250,24 +245,15 @@ function gerarPalpite(analise){
   else if(hora < 18) alvo = "18:20";
   else alvo = "21:20";
 
-  const lista = analise.por_horario[alvo] || [];
+  const lista = analise.por_horario[alvo] || {};
 
-  if(!lista.length) return ["00","11","22"];
+  const top = Object.entries(lista)
+    .sort((a,b)=>b[1]-a[1])
+    .slice(0,3);
 
-  return lista.slice(0,3).map(x=>x[0]);
-}
+  if(!top.length) return ["00","11","22"];
 
-//////////////////////////////////////////////////
-// 🧠 SEPARAR POR BANCA
-//////////////////////////////////////////////////
-
-function separarPorBanca(dados){
-  return {
-    rio: dados.filter(d => d.banca === "rio"),
-    nacional: dados.filter(d => d.banca === "nacional"),
-    look: dados.filter(d => d.banca === "look"),
-    federal: dados.filter(d => d.banca === "federal")
-  };
+  return top.map(x=>x[0]);
 }
 
 //////////////////////////////////////////////////
@@ -278,29 +264,14 @@ app.get("/resultados", async (req,res)=>{
 
   try{
 
-    const f1 = await fonte1();
-    const f2 = await fonte2();
-    const f3 = await fonte3();
+    const rio = await fonteRio();
+    const nacional = await fonteNacional();
+    const look = await fonteLook();
+    const federal = await fonteFederal();
 
-    let dados = [];
+    const todos = [...rio, ...nacional, ...look, ...federal];
 
-    // prioridade correta (não mistura)
-    if(f1.length){
-      console.log("✅ fonte1");
-      dados = f1;
-    }
-    else if(f2.length){
-      console.log("⚠️ fonte2");
-      dados = f2;
-    }
-    else if(f3.length){
-      console.log("⚠️ fonte3");
-      dados = f3;
-    }
-
-    if(dados.length){
-      salvar(dados);
-    }
+    if(todos.length) salvar(todos);
 
     let banco = [];
 
@@ -308,7 +279,12 @@ app.get("/resultados", async (req,res)=>{
       banco = JSON.parse(fs.readFileSync(DB));
     }catch{}
 
-    const separado = separarPorBanca(banco);
+    const separado = {
+      rio: banco.filter(x=>x.banca==="rio"),
+      nacional: banco.filter(x=>x.banca==="nacional"),
+      look: banco.filter(x=>x.banca==="look"),
+      federal: banco.filter(x=>x.banca==="federal")
+    };
 
     const analise = {
       rio: analisar(separado.rio),
@@ -320,7 +296,7 @@ app.get("/resultados", async (req,res)=>{
     const palpite = gerarPalpite(analise.rio);
 
     res.json({
-      fonte: "banca-real-pro",
+      fonte: "banca-real-total",
       total: banco.length,
       ...separado,
       analise,
@@ -336,14 +312,6 @@ app.get("/resultados", async (req,res)=>{
 
   }
 
-});
-
-//////////////////////////////////////////////////
-// TESTE
-//////////////////////////////////////////////////
-
-app.get("/", (req,res)=>{
-  res.send("API BANCA REAL 🔥");
 });
 
 //////////////////////////////////////////////////
