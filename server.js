@@ -5,35 +5,41 @@ import cors from "cors";
 const app = express();
 app.use(cors());
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
-// ================= FUNÇÃO BUSCAR RESULTADOS =================
+// ================= MULTI FONTES =================
+const fontes = [
+  "https://bicho-api.onrender.com",
+  "https://api.allorigins.win/raw?url=https://bicho-api.onrender.com"
+];
+
+// ================= BUSCAR =================
 async function buscarResultados() {
-  try {
-    // API pública (ajuste se necessário)
-    const res = await axios.get("https://bicho-api.onrender.com");
+  for (let url of fontes) {
+    try {
+      const res = await axios.get(url, { timeout: 5000 });
 
-    const dados = res.data;
+      if (res.data && Object.keys(res.data).length > 0) {
+        console.log("Fonte OK:", url);
 
-    return {
-      fonte: "api-publica",
-      rio: dados.rio || [],
-      look: dados.look || [],
-      nacional: dados.nacional || [],
-      federal: dados.federal || []
-    };
+        return {
+          fonte: url,
+          ...res.data
+        };
+      }
 
-  } catch (erro) {
-    console.log("Erro API:", erro.message);
-
-    return {
-      fonte: "fallback",
-      rio: [],
-      look: [],
-      nacional: [],
-      federal: []
-    };
+    } catch (e) {
+      console.log("Falha:", url);
+    }
   }
+
+  return {
+    fonte: "offline",
+    rio: [],
+    look: [],
+    nacional: [],
+    federal: []
+  };
 }
 
 // ================= ROTA =================
@@ -42,7 +48,12 @@ app.get("/resultados", async (req, res) => {
   res.json(dados);
 });
 
+// ================= KEEP ALIVE =================
+app.get("/", (req, res) => {
+  res.send("API rodando 🚀");
+});
+
 // ================= START =================
 app.listen(PORT, () => {
-  console.log("Servidor rodando em http://localhost:" + PORT);
+  console.log("Rodando na porta", PORT);
 });
