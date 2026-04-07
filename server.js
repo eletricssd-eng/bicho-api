@@ -21,13 +21,19 @@ if (!fs.existsSync(DB)) fs.writeFileSync(DB, "[]");
 const HORARIOS = ["09:20","11:20","14:20","16:20","18:20","21:20"];
 
 //////////////////////////////////////////////////
-// 📅 DATA REAL
+// 📅 EXTRAIR DATA REAL
 //////////////////////////////////////////////////
 
 function extrairData(texto){
-  const match = texto.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-  if(match) return `${match[3]}-${match[2]}-${match[1]}`;
-  return new Date().toISOString().split("T")[0];
+  if(!texto) return null;
+
+  let m = texto.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  if(m) return `${m[3]}-${m[2]}-${m[1]}`;
+
+  m = texto.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+
+  return null;
 }
 
 //////////////////////////////////////////////////
@@ -42,14 +48,13 @@ function normalizar(lista, banca){
     resultados: item.resultados.map(r => ({
       pos: Number(r.pos),
       numero: String(r.numero).padStart(4,"0"),
-      grupo: r.grupo || "",
       dezena: String(r.numero).slice(-2)
     }))
   }));
 }
 
 //////////////////////////////////////////////////
-// 🌐 RIO (HTML REAL)
+// 🌐 FONTE RIO
 //////////////////////////////////////////////////
 
 async function fonteRio(){
@@ -67,8 +72,8 @@ async function fonteRio(){
 
       if(col.length >= 6){
 
-        const dataTxt = $(col[0]).text().trim();
-        const dataReal = extrairData(dataTxt);
+        const dataReal = extrairData($(col[0]).text().trim());
+        if(!dataReal) return;
 
         let resultados = [];
 
@@ -97,46 +102,34 @@ async function fonteRio(){
 
     return normalizar(lista,"rio");
 
-  }catch(e){
-    console.log("❌ rio erro");
+  }catch{
+    console.log("❌ erro rio");
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🌐 NACIONAL (API)
+// 🌐 FONTE API
 //////////////////////////////////////////////////
 
-async function fonteNacional(){
+async function fonteAPI(){
   try{
     const { data } = await axios.get(
-      "https://api.allorigins.win/raw?url=https://app.centraldobichobrasil.com/api/results"
+      "https://bicho-api.onrender.com/resultados"
     );
 
-    if(!data || !data.length) return [];
+    return normalizar(data.rio || [],"rio");
 
-    const lista = data.map(item => ({
-      data: item.date,
-      horario: item.time || "",
-      resultados: item.results.map((r,i)=>({
-        pos: i+1,
-        numero: r.number
-      }))
-    }));
-
-    return normalizar(lista,"nacional");
-
-  }catch(e){
-    console.log("❌ nacional erro");
+  }catch{
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🌐 LOOK (SCRAPING)
+// 🌐 FONTE EXTRA
 //////////////////////////////////////////////////
 
-async function fonteLook(){
+async function fonteExtra(){
   try{
     const { data } = await axios.get(
       "https://api.allorigins.win/raw?url=https://resultadofacil.com.br/resultado-do-jogo-do-bicho/"
@@ -155,29 +148,75 @@ async function fonteLook(){
           lista.push({
             data: new Date().toISOString().split("T")[0],
             horario: "",
-            resultados:[{
-              pos: 1,
-              numero
-            }]
+            resultados:[{ pos:1, numero }]
           });
         }
       }
     });
 
-    return normalizar(lista,"look");
+    return normalizar(lista,"rio");
 
-  }catch(e){
-    console.log("❌ look erro");
+  }catch{
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🌐 FEDERAL (fallback simples)
+// 🔥 VALIDAÇÃO CRUZADA
 //////////////////////////////////////////////////
 
-async function fonteFederal(){
-  return [];
+function validarResultados(fontes){
+
+  const mapa = {};
+
+  fontes.flat().forEach(item=>{
+    item.resultados.forEach(r=>{
+
+      const chave = `${item.data}-${item.horario}-${r.pos}-${r.dezena}`;
+
+      if(!mapa[chave]){
+        mapa[chave] = {
+          banca: item.banca,
+          data: item.data,
+          horario: item.horario,
+          resultados: [],
+          confirmacoes: 0
+        };
+      }
+
+      mapa[chave].confirmacoes++;
+      mapa[chave].resultados.push(r);
+
+    });
+  });
+
+  return Object.values(mapa).filter(x => x.confirmacoes >= 2);
+}
+
+//////////////////////////////////////////////////
+// 🧠 AGRUPAR
+//////////////////////////////////////////////////
+
+function agrupar(lista){
+
+  const mapa = {};
+
+  lista.forEach(item=>{
+    const chave = item.data + "-" + item.horario;
+
+    if(!mapa[chave]){
+      mapa[chave] = {
+        banca: item.banca,
+        data: item.data,
+        horario: item.horario,
+        resultados: []
+      };
+    }
+
+    mapa[chave].resultados.push(...item.resultados);
+  });
+
+  return Object.values(mapa);
 }
 
 //////////////////////////////////////////////////
@@ -187,7 +226,6 @@ async function fonteFederal(){
 function salvar(novos){
 
   let antigos = [];
-
   try{
     antigos = JSON.parse(fs.readFileSync(DB));
   }catch{}
@@ -205,28 +243,22 @@ function salvar(novos){
 }
 
 //////////////////////////////////////////////////
-// 📊 ANALISAR
+// 📊 ANALISE
 //////////////////////////////////////////////////
 
 function analisar(dados){
 
   let mapa = {};
-  let porHorario = {};
 
   dados.forEach(d=>{
-    if(!porHorario[d.horario]) porHorario[d.horario] = {};
-
     d.resultados.forEach(r=>{
       mapa[r.dezena] = (mapa[r.dezena] || 0) + 1;
-      porHorario[d.horario][r.dezena] =
-        (porHorario[d.horario][r.dezena] || 0) + 1;
     });
   });
 
-  return {
-    mais_fortes: Object.entries(mapa).sort((a,b)=>b[1]-a[1]).slice(0,10),
-    por_horario: porHorario
-  };
+  return Object.entries(mapa)
+    .sort((a,b)=>b[1]-a[1])
+    .slice(0,10);
 }
 
 //////////////////////////////////////////////////
@@ -235,25 +267,9 @@ function analisar(dados){
 
 function gerarPalpite(analise){
 
-  const hora = new Date().getHours();
+  if(!analise.length) return ["00","11","22"];
 
-  let alvo = "18:20";
-
-  if(hora < 11) alvo = "11:20";
-  else if(hora < 14) alvo = "14:20";
-  else if(hora < 16) alvo = "16:20";
-  else if(hora < 18) alvo = "18:20";
-  else alvo = "21:20";
-
-  const lista = analise.por_horario[alvo] || {};
-
-  const top = Object.entries(lista)
-    .sort((a,b)=>b[1]-a[1])
-    .slice(0,3);
-
-  if(!top.length) return ["00","11","22"];
-
-  return top.map(x=>x[0]);
+  return analise.slice(0,3).map(x=>x[0]);
 }
 
 //////////////////////////////////////////////////
@@ -264,14 +280,14 @@ app.get("/resultados", async (req,res)=>{
 
   try{
 
-    const rio = await fonteRio();
-    const nacional = await fonteNacional();
-    const look = await fonteLook();
-    const federal = await fonteFederal();
+    const f1 = await fonteRio();
+    const f2 = await fonteAPI();
+    const f3 = await fonteExtra();
 
-    const todos = [...rio, ...nacional, ...look, ...federal];
+    const validados = validarResultados([f1,f2,f3]);
+    const dados = agrupar(validados);
 
-    if(todos.length) salvar(todos);
+    if(dados.length) salvar(dados);
 
     let banco = [];
 
@@ -279,26 +295,15 @@ app.get("/resultados", async (req,res)=>{
       banco = JSON.parse(fs.readFileSync(DB));
     }catch{}
 
-    const separado = {
-      rio: banco.filter(x=>x.banca==="rio"),
-      nacional: banco.filter(x=>x.banca==="nacional"),
-      look: banco.filter(x=>x.banca==="look"),
-      federal: banco.filter(x=>x.banca==="federal")
-    };
+    const rio = banco.filter(x=>x.banca==="rio");
 
-    const analise = {
-      rio: analisar(separado.rio),
-      nacional: analisar(separado.nacional),
-      look: analisar(separado.look),
-      federal: analisar(separado.federal)
-    };
-
-    const palpite = gerarPalpite(analise.rio);
+    const analise = analisar(rio);
+    const palpite = gerarPalpite(analise);
 
     res.json({
-      fonte: "banca-real-total",
+      fonte: "banca-validada",
       total: banco.length,
-      ...separado,
+      rio,
       analise,
       palpite
     });
@@ -306,7 +311,7 @@ app.get("/resultados", async (req,res)=>{
   }catch(e){
 
     res.json({
-      erro: "falha geral",
+      erro:"falha geral",
       rio:[]
     });
 
