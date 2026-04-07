@@ -14,6 +14,17 @@ const DB = path.join(__dirname, "dados.json");
 if (!fs.existsSync(DB)) fs.writeFileSync(DB, "[]");
 
 //////////////////////////////////////////////////
+// 🧠 BANCAS + HORÁRIOS REAIS
+//////////////////////////////////////////////////
+
+const BANCAS = {
+  rio: ["09:20","11:20","14:20","16:20","18:20","21:20"],
+  nacional: ["10:00","12:00","15:00","17:00","19:00","21:00"],
+  look: ["09:00","11:00","14:00","16:00","18:00","20:00"],
+  federal: ["19:00"]
+};
+
+//////////////////////////////////////////////////
 // 📅 DATA
 //////////////////////////////////////////////////
 
@@ -22,7 +33,7 @@ function hoje(){
 }
 
 //////////////////////////////////////////////////
-// 🧹 NORMALIZAR PADRÃO
+// 🧹 NORMALIZAR
 //////////////////////////////////////////////////
 
 function normalizar(lista, banca){
@@ -30,7 +41,7 @@ function normalizar(lista, banca){
   if(!Array.isArray(lista)) return [];
 
   return lista.map(item => ({
-    banca,
+    banca: banca || "rio",
     data: item.date || item.data || hoje(),
     horario: item.time || item.horario || "",
     resultados: (item.results || item.resultados || []).map((r,i)=>({
@@ -42,7 +53,7 @@ function normalizar(lista, banca){
 }
 
 //////////////////////////////////////////////////
-// 🌐 FONTE 1 (CENTRAL)
+// 🌐 FONTE PRINCIPAL
 //////////////////////////////////////////////////
 
 async function fonte1(){
@@ -53,13 +64,13 @@ async function fonte1(){
     );
     return normalizar(data,"rio");
   }catch{
-    console.log("❌ fonte1 off");
+    console.log("❌ fonte1 falhou");
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🌐 FONTE 2 (API ALTERNATIVA)
+// 🌐 BACKUP
 //////////////////////////////////////////////////
 
 async function fonte2(){
@@ -70,48 +81,62 @@ async function fonte2(){
     );
     return normalizar(data.rio || [],"rio");
   }catch{
-    console.log("❌ fonte2 off");
+    console.log("❌ fonte2 falhou");
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🌐 FONTE 3 (FALLBACK LOCAL SIMPLES)
+// 🧠 APLICAR BANCA + HORÁRIO
 //////////////////////////////////////////////////
 
-function fonte3(){
+function aplicarBancaHorario(lista){
 
-  return [{
-    banca: "rio",
-    data: hoje(),
-    horario: "",
-    resultados:[
-      {pos:1, numero:"1234", dezena:"34"},
-      {pos:2, numero:"5678", dezena:"78"},
-      {pos:3, numero:"9012", dezena:"12"},
-      {pos:4, numero:"3456", dezena:"56"},
-      {pos:5, numero:"7890", dezena:"90"}
-    ]
-  }];
+  let contador = {
+    rio:0, nacional:0, look:0, federal:0
+  };
+
+  return lista.map(item=>{
+
+    let banca = item.banca || "rio";
+
+    if(!BANCAS[banca]) banca = "rio";
+
+    const horarios = BANCAS[banca];
+
+    const horario = item.horario || horarios[contador[banca] % horarios.length];
+
+    contador[banca]++;
+
+    return {
+      ...item,
+      banca,
+      horario
+    };
+  });
 }
 
 //////////////////////////////////////////////////
-// 🔀 ESCOLHER MELHOR FONTE
+// 🔁 REMOVER DUPLICADOS
 //////////////////////////////////////////////////
 
-async function pegarDados(){
+function removerDuplicados(lista){
 
-  const f1 = await fonte1();
-  if(f1.length) return f1;
+  const mapa = {};
 
-  const f2 = await fonte2();
-  if(f2.length) return f2;
+  lista.forEach(item=>{
+    const chave = item.data + "-" + item.banca + "-" + item.horario;
 
-  return fonte3(); // nunca fica vazio
+    if(!mapa[chave]){
+      mapa[chave] = item;
+    }
+  });
+
+  return Object.values(mapa);
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR (7 DIAS)
+// 💾 SALVAR
 //////////////////////////////////////////////////
 
 function salvar(novos){
@@ -122,16 +147,19 @@ function salvar(novos){
     antigos = JSON.parse(fs.readFileSync(DB));
   }catch{}
 
-  const todos = [...novos, ...antigos];
+  let todos = [...novos, ...antigos];
+
+  todos = aplicarBancaHorario(todos);
+  todos = removerDuplicados(todos);
 
   const limite = new Date();
   limite.setDate(limite.getDate() - 7);
 
-  const filtrado = todos.filter(d =>
+  todos = todos.filter(d =>
     new Date(d.data) >= limite
   );
 
-  fs.writeFileSync(DB, JSON.stringify(filtrado,null,2));
+  fs.writeFileSync(DB, JSON.stringify(todos,null,2));
 }
 
 //////////////////////////////////////////////////
@@ -165,6 +193,19 @@ function gerarPalpite(analise){
 }
 
 //////////////////////////////////////////////////
+// 🏦 SEPARAR
+//////////////////////////////////////////////////
+
+function separar(lista){
+  return {
+    rio: lista.filter(x=>x.banca==="rio"),
+    nacional: lista.filter(x=>x.banca==="nacional"),
+    look: lista.filter(x=>x.banca==="look"),
+    federal: lista.filter(x=>x.banca==="federal")
+  };
+}
+
+//////////////////////////////////////////////////
 // 🚀 ROTA
 //////////////////////////////////////////////////
 
@@ -172,10 +213,14 @@ app.get("/resultados", async (req,res)=>{
 
   try{
 
-    const novos = await pegarDados();
+    let dados = await fonte1();
 
-    if(novos.length){
-      salvar(novos);
+    if(!dados.length){
+      dados = await fonte2();
+    }
+
+    if(dados.length){
+      salvar(dados);
     }
 
     let banco = [];
@@ -184,13 +229,15 @@ app.get("/resultados", async (req,res)=>{
       banco = JSON.parse(fs.readFileSync(DB));
     }catch{}
 
+    const separados = separar(banco);
+
     const analise = analisar(banco);
     const palpite = gerarPalpite(analise);
 
     res.json({
-      fonte: "multi-api-estavel",
+      fonte: "banca-real",
       total: banco.length,
-      rio: banco,
+      ...separados,
       analise,
       palpite
     });
