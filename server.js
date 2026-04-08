@@ -7,132 +7,158 @@ app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
+// ================= CONFIG =================
+const YT_KEY = "AIzaSyAGQ1mYfOxWm97S90nR0Hew-ukg3VdU4vE";
+
 // ================= CACHE =================
 let cache = null;
 let tempo = 0;
 
-// ================= RIO =================
-async function pegarRio() {
+// ================= API BASE =================
+async function fonteAPI() {
   try {
-    const { data } = await axios.get("https://www.deunoposte.com/", {
-      headers: { "User-Agent": "Mozilla/5.0" },
-      timeout: 10000
+    const { data } = await axios.get("https://bicho-api.onrender.com", {
+      timeout: 5000
+    });
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+// ================= SCRAPER SIMPLES =================
+async function scraperSimples(url) {
+  try {
+    const { data } = await axios.get(url, {
+      headers: { "User-Agent": "Mozilla/5.0" }
     });
 
-    const linhas = data.split("\n");
-    let resultados = [];
+    const nums = data.match(/\d{4}/g) || [];
 
-    linhas.forEach(linha => {
-      if (
-        linha.includes("1º") &&
-        linha.includes("2º") &&
-        linha.includes("3º")
-      ) {
-        const nums = linha.match(/\d{4}/g);
+    if (nums.length < 5) return [];
 
-        if (nums && nums.length >= 5) {
-          resultados.push({
-            horario: "PT",
-            p1: nums[0],
-            p2: nums[1],
-            p3: nums[2],
-            p4: nums[3],
-            p5: nums[4]
-          });
-        }
-      }
-    });
+    return [{
+      horario: "extração",
+      p1: nums[0],
+      p2: nums[1],
+      p3: nums[2],
+      p4: nums[3],
+      p5: nums[4]
+    }];
 
-    return resultados.slice(0, 5);
-
-  } catch (e) {
-    console.log("Erro Rio:", e.message);
+  } catch {
     return [];
   }
 }
 
-// ================= LOOK GO =================
-async function pegarLook() {
+// ================= YOUTUBE =================
+async function buscarYouTube() {
   try {
-    const { data } = await axios.get("https://lookgoias.com/", {
-      headers: { "User-Agent": "Mozilla/5.0" },
-      timeout: 10000
-    });
-
-    const linhas = data.split("\n");
-    let resultados = [];
-
-    linhas.forEach(linha => {
-      if (linha.includes("1º")) {
-        const nums = linha.match(/\d{4}/g);
-
-        if (nums && nums.length >= 5) {
-          resultados.push({
-            horario: "GO",
-            p1: nums[0],
-            p2: nums[1],
-            p3: nums[2],
-            p4: nums[3],
-            p5: nums[4]
-          });
-        }
-      }
-    });
-
-    return resultados.slice(0, 5);
-
-  } catch (e) {
-    console.log("Erro Look:", e.message);
-    return [];
-  }
-}
-
-// ================= FEDERAL =================
-async function pegarFederal() {
-  try {
-    const { data } = await axios.get(
-      "https://servicebus2.caixa.gov.br/portaldeloterias/api/federal",
+    const res = await axios.get(
+      "https://www.googleapis.com/youtube/v3/search",
       {
-        headers: { "User-Agent": "Mozilla/5.0" },
-        timeout: 10000
+        params: {
+          part: "snippet",
+          q: "resultado jogo do bicho hoje rio goias federal",
+          maxResults: 5,
+          key: YT_KEY
+        }
       }
     );
 
-    const sorteio = data.listaSorteios?.[0];
-
-    if (!sorteio) return [];
-
-    return [{
-      horario: "Federal",
-      p1: sorteio.dezenas[0],
-      p2: sorteio.dezenas[1],
-      p3: sorteio.dezenas[2],
-      p4: sorteio.dezenas[3],
-      p5: sorteio.dezenas[4]
-    }];
+    return res.data.items;
 
   } catch (e) {
-    console.log("Erro Federal:", e.message);
+    console.log("Erro YouTube:", e.message);
     return [];
   }
 }
 
-// ================= CARREGAR TUDO =================
+function extrairResultados(texto) {
+  const nums = texto.match(/\d{4}/g) || [];
+
+  if (nums.length < 5) return null;
+
+  return {
+    horario: "YouTube",
+    p1: nums[0],
+    p2: nums[1],
+    p3: nums[2],
+    p4: nums[3],
+    p5: nums[4]
+  };
+}
+
+async function pegarYouTube() {
+  const videos = await buscarYouTube();
+
+  for (let v of videos) {
+    const titulo = v.snippet.title;
+
+    const resultado = extrairResultados(titulo);
+
+    if (resultado) {
+      console.log("✅ YouTube:", titulo);
+      return [resultado];
+    }
+  }
+
+  return [];
+}
+
+// ================= ORGANIZAR =================
+function organizar(lista) {
+  if (!Array.isArray(lista)) return [];
+
+  return lista.map(item => ({
+    horario: item.horario || item.nome || "N/D",
+    p1: item.p1 || item["1"] || "-",
+    p2: item.p2 || item["2"] || "-",
+    p3: item.p3 || item["3"] || "-",
+    p4: item.p4 || item["4"] || "-",
+    p5: item.p5 || item["5"] || "-"
+  }));
+}
+
+// ================= PRINCIPAL =================
 async function carregarTudo() {
   const agora = Date.now();
 
   if (cache && agora - tempo < 60000) {
-    console.log("⚡ usando cache");
+    console.log("⚡ cache");
     return cache;
   }
 
-  console.log("🔄 atualizando dados...");
+  console.log("🔄 atualizando...");
 
-  const [rio, look, federal] = await Promise.all([
-    pegarRio(),
-    pegarLook(),
-    pegarFederal()
-  ]);
+  // 1️⃣ API
+  const base = await fonteAPI();
+
+  let rio = organizar(base?.rio || []);
+  let look = organizar(base?.look || []);
+  let federal = organizar(base?.federal || []);
+
+  // 2️⃣ SCRAPER fallback
+  if (rio.length === 0) {
+    console.log("🔴 fallback scraper RIO");
+    rio = await scraperSimples("https://www.deunoposte.com/");
+  }
+
+  if (look.length === 0) {
+    console.log("🟡 fallback scraper LOOK");
+    look = await scraperSimples("https://lookgoias.com/");
+  }
+
+  // 3️⃣ YOUTUBE fallback FINAL
+  if (rio.length === 0) {
+    console.log("🔴 fallback YouTube RIO");
+    rio = await pegarYouTube();
+  }
+
+  if (look.length === 0) {
+    console.log("🟡 fallback YouTube LOOK");
+    look = await pegarYouTube();
+  }
 
   cache = {
     atualizado: new Date().toLocaleString(),
@@ -155,7 +181,7 @@ app.get("/resultados", async (req, res) => {
 app.get("/", (req, res) => {
   res.json({
     status: "ok",
-    msg: "API REAL rodando 🚀",
+    msg: "API COMPLETA rodando 🚀",
     rota: "/resultados"
   });
 });
