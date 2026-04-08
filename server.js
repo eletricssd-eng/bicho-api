@@ -8,7 +8,12 @@ app.use(cors());
 const PORT = process.env.PORT || 3000;
 
 // ================= CONFIG =================
-const YT_KEY = "AIzaSyAGQ1mYfOxWm97S90nR0Hew-ukg3VdU4vE"; // 🔥 coloque sua chave
+const YT_KEY = "SUA_API_KEY_AQUI";
+
+// ================= CANAL BOM PALPITE =================
+const canais = [
+  "UC0cRrQj7hX9r0x0d9wq0R8A"
+];
 
 // ================= CACHE =================
 let cache = null;
@@ -24,6 +29,34 @@ function numerosValidos(nums) {
 
     return true;
   });
+}
+
+// ================= SCRAPER LOOK =================
+async function scraperSimples(url) {
+  try {
+    const { data } = await axios.get(url, {
+      headers: { "User-Agent": "Mozilla/5.0" }
+    });
+
+    let nums = data.match(/\d{4}/g) || [];
+
+    nums = numerosValidos(nums);
+    nums = [...new Set(nums)];
+
+    if (nums.length < 5) return [];
+
+    return [{
+      horario: "extração",
+      p1: nums[0],
+      p2: nums[1],
+      p3: nums[2],
+      p4: nums[3],
+      p5: nums[4]
+    }];
+
+  } catch {
+    return [];
+  }
 }
 
 // ================= FEDERAL =================
@@ -55,43 +88,16 @@ async function pegarFederal() {
   }
 }
 
-// ================= SCRAPER =================
-async function scraperSimples(url) {
-  try {
-    const { data } = await axios.get(url, {
-      headers: { "User-Agent": "Mozilla/5.0" }
-    });
-
-    let nums = data.match(/\d{4}/g) || [];
-
-    nums = numerosValidos(nums);
-    nums = [...new Set(nums)];
-
-    if (nums.length < 5) return [];
-
-    return [{
-      horario: "extração",
-      p1: nums[0],
-      p2: nums[1],
-      p3: nums[2],
-      p4: nums[3],
-      p5: nums[4]
-    }];
-
-  } catch {
-    return [];
-  }
-}
-
-// ================= YOUTUBE =================
-async function buscarYouTube() {
+// ================= YOUTUBE POR CANAL =================
+async function buscarPorCanal(channelId) {
   try {
     const res = await axios.get(
       "https://www.googleapis.com/youtube/v3/search",
       {
         params: {
           part: "snippet",
-          q: "resultado jogo do bicho rio 1º 2º 3º 4º 5º hoje",
+          channelId: channelId,
+          order: "date",
           maxResults: 10,
           key: YT_KEY
         }
@@ -101,12 +107,12 @@ async function buscarYouTube() {
     return res.data.items;
 
   } catch (e) {
-    console.log("Erro YouTube:", e.message);
+    console.log("Erro canal:", e.message);
     return [];
   }
 }
 
-// ================= EXTRAÇÃO INTELIGENTE =================
+// ================= EXTRAÇÃO =================
 function extrairResultados(texto) {
   let nums = texto.match(/\d{4}/g) || [];
 
@@ -124,25 +130,25 @@ function extrairResultados(texto) {
   };
 }
 
-// ================= PEGAR YOUTUBE =================
+// ================= PEGAR RESULTADO YOUTUBE =================
 async function pegarYouTube() {
-  const videos = await buscarYouTube();
+  for (let canal of canais) {
+    const videos = await buscarPorCanal(canal);
 
-  for (let v of videos) {
-    const titulo = v.snippet.title;
-    const descricao = v.snippet.description || "";
+    for (let v of videos) {
+      const titulo = v.snippet.title;
+      const descricao = v.snippet.description || "";
 
-    console.log("🔎 título:", titulo);
-    console.log("📝 descrição:", descricao);
+      const texto = titulo + " " + descricao;
 
-    // junta título + descrição
-    const texto = titulo + " " + descricao;
+      console.log("🔎 título:", titulo);
 
-    const resultado = extrairResultados(texto);
+      const resultado = extrairResultados(texto);
 
-    if (resultado) {
-      console.log("✅ YouTube OK:", texto);
-      return [resultado];
+      if (resultado) {
+        console.log("✅ BOM PALPITE OK");
+        return [resultado];
+      }
     }
   }
 
@@ -160,16 +166,16 @@ async function carregarTudo() {
 
   console.log("🔄 atualizando...");
 
-  // LOOK via scraper
+  // LOOK
   let look = await scraperSimples("https://lookgoias.com/");
 
-  // RIO via YouTube
+  // RIO (YouTube canal)
   let rio = await pegarYouTube();
 
-  // FEDERAL oficial
+  // FEDERAL
   let federal = await pegarFederal();
 
-  // fallback LOOK se lixo
+  // fallback LOOK
   if (look.length === 0 || look[0]?.p1 === "2025") {
     console.log("⚠️ fallback YouTube LOOK");
     look = await pegarYouTube();
@@ -196,7 +202,7 @@ app.get("/resultados", async (req, res) => {
 app.get("/", (req, res) => {
   res.json({
     status: "ok",
-    msg: "API YOUTUBE + SCRAPER rodando 🚀",
+    msg: "API rodando 🚀",
     rota: "/resultados"
   });
 });
