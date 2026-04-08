@@ -8,11 +8,23 @@ app.use(cors());
 const PORT = process.env.PORT || 3000;
 
 // ================= CONFIG =================
-const YT_KEY = "AIzaSyAGQ1mYfOxWm97S90nR0Hew-ukg3VdU4vE";
+const YT_KEY = "SUA_API_KEY_AQUI"; // ⚠️ troque sua chave
 
 // ================= CACHE =================
 let cache = null;
 let tempo = 0;
+
+// ================= FILTRO =================
+function numerosValidos(nums) {
+  return nums.filter(n => {
+    const num = parseInt(n);
+
+    if (num >= 2000 && num <= 2100) return false;
+    if (/^(\d)\1{3}$/.test(n)) return false;
+
+    return true;
+  });
+}
 
 // ================= API BASE =================
 async function fonteAPI() {
@@ -26,22 +38,7 @@ async function fonteAPI() {
   }
 }
 
-// ================= FILTRO INTELIGENTE =================
-function numerosValidos(nums) {
-  return nums.filter(n => {
-    const num = parseInt(n);
-
-    // remove anos
-    if (num >= 2000 && num <= 2100) return false;
-
-    // remove tipo 1111, 2222
-    if (/^(\d)\1{3}$/.test(n)) return false;
-
-    return true;
-  });
-}
-
-// ================= SCRAPER MELHORADO =================
+// ================= SCRAPER =================
 async function scraperSimples(url) {
   try {
     const { data } = await axios.get(url, {
@@ -50,10 +47,7 @@ async function scraperSimples(url) {
 
     let nums = data.match(/\d{4}/g) || [];
 
-    // 🔥 limpar lixo
     nums = numerosValidos(nums);
-
-    // 🔥 remover duplicados
     nums = [...new Set(nums)];
 
     if (nums.length < 5) return [];
@@ -68,6 +62,35 @@ async function scraperSimples(url) {
     }];
 
   } catch {
+    return [];
+  }
+}
+
+// ================= FEDERAL =================
+async function pegarFederal() {
+  try {
+    const { data } = await axios.get(
+      "https://servicebus2.caixa.gov.br/portaldeloterias/api/federal",
+      {
+        headers: { "User-Agent": "Mozilla/5.0" }
+      }
+    );
+
+    const sorteio = data.listaSorteios?.[0];
+
+    if (!sorteio) return [];
+
+    return [{
+      horario: "Federal",
+      p1: sorteio.dezenas[0],
+      p2: sorteio.dezenas[1],
+      p3: sorteio.dezenas[2],
+      p4: sorteio.dezenas[3],
+      p5: sorteio.dezenas[4]
+    }];
+
+  } catch (e) {
+    console.log("Erro Federal:", e.message);
     return [];
   }
 }
@@ -152,34 +175,30 @@ async function carregarTudo() {
 
   console.log("🔄 atualizando...");
 
-  // 1️⃣ API
+  // API
   const base = await fonteAPI();
 
   let rio = organizar(base?.rio || []);
   let look = organizar(base?.look || []);
-  let federal = organizar(base?.federal || []);
 
-  // 2️⃣ SCRAPER fallback
-  if (rio.length === 0) {
-    console.log("🔴 fallback scraper RIO");
-    rio = await scraperSimples("https://www.deunoposte.com/");
-  }
+  // FEDERAL DIRETO
+  let federal = await pegarFederal();
 
+  // SCRAPER fallback
   if (look.length === 0) {
     console.log("🟡 fallback scraper LOOK");
     look = await scraperSimples("https://lookgoias.com/");
   }
 
-  // 3️⃣ YOUTUBE fallback FINAL
-  if (rio.length === 0 || rio[0]?.p1 === "2025") {
-  console.log("⚠️ lixo detectado → YouTube RIO");
+  // 🔥 RIO DIRETO DO YOUTUBE (mais confiável)
+  console.log("🔴 usando YouTube como fonte RIO");
   rio = await pegarYouTube();
-}
 
+  // fallback extra se LOOK vier lixo
   if (look.length === 0 || look[0]?.p1 === "2025") {
-  console.log("⚠️ lixo detectado → YouTube LOOK");
-  look = await pegarYouTube();
-}
+    console.log("⚠️ fallback YouTube LOOK");
+    look = await pegarYouTube();
+  }
 
   cache = {
     atualizado: new Date().toLocaleString(),
