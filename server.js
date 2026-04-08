@@ -40,7 +40,7 @@ async function pegarFederal() {
   }
 }
 
-// ================= RESULTADO FACIL (TUDO) =================
+// ================= RESULTADO FACIL (AUTO DETECÇÃO) =================
 async function pegarResultados() {
   try {
     const { data } = await axios.get(
@@ -50,13 +50,9 @@ async function pegarResultados() {
 
     const $ = cheerio.load(data);
 
-    const resultadoFinal = {
-      rio: [],
-      look: [],
-      nacional: []
-    };
+    const resultadoFinal = {};
 
-    $("h3").each((i, el) => {
+    $("h2, h3").each((i, el) => {
       const tituloOriginal = $(el).text().trim();
       const titulo = tituloOriginal.toLowerCase();
 
@@ -74,30 +70,51 @@ async function pegarResultados() {
 
       if (nums.length < 5) return;
 
-      const item = {
-        horario: tituloOriginal,
+      // ===== DETECTAR HORÁRIO =====
+      let horario = "EXTRAÇÃO";
+
+      const horariosPadrao = [
+        "ptm", "pt", "ptv", "ptn",
+        "coruja", "manhã", "tarde", "noite"
+      ];
+
+      for (let h of horariosPadrao) {
+        if (titulo.includes(h)) {
+          horario = h.toUpperCase();
+          break;
+        }
+      }
+
+      // ===== DETECTAR BANCA =====
+      let banca = "outros";
+
+      if (titulo.includes("rio")) banca = "rio";
+      else if (titulo.includes("look")) banca = "look";
+      else if (titulo.includes("nacional")) banca = "nacional";
+      else if (titulo.includes("bahia")) banca = "bahia";
+      else if (titulo.includes("goias")) banca = "goias";
+      else if (titulo.includes("minas")) banca = "minas";
+
+      if (!resultadoFinal[banca]) {
+        resultadoFinal[banca] = [];
+      }
+
+      resultadoFinal[banca].push({
+        horario,
+        titulo: tituloOriginal,
         p1: nums[0],
         p2: nums[1],
         p3: nums[2],
         p4: nums[3],
         p5: nums[4]
-      };
-
-      // ===== SEPARAÇÃO AUTOMÁTICA =====
-      if (titulo.includes("rio")) {
-        resultadoFinal.rio.push(item);
-      } else if (titulo.includes("look")) {
-        resultadoFinal.look.push(item);
-      } else if (titulo.includes("nacional")) {
-        resultadoFinal.nacional.push(item);
-      }
+      });
     });
 
     return resultadoFinal;
 
   } catch (e) {
     console.log("Erro scraping:", e.message);
-    return { rio: [], look: [], nacional: [] };
+    return {};
   }
 }
 
@@ -117,9 +134,7 @@ async function carregarTudo() {
 
   cache = {
     atualizado: new Date().toLocaleString(),
-    rio: dadosSite.rio,
-    look: dadosSite.look,
-    nacional: dadosSite.nacional,
+    ...dadosSite,
     federal
   };
 
