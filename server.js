@@ -41,18 +41,23 @@ async function fontePrincipal() {
 }
 
 // ================= SCRAPER FALLBACK =================
-async function fallbackSimples(url) {
-  try {
-    const { data } = await axios.get(url, {
-      headers: { "User-Agent": "Mozilla/5.0" }
-    });
+function limparNumeros(numeros) {
+  return numeros.filter(n => {
+    const num = parseInt(n);
 
-    // extrai números tipo 1234
-    const numeros = data.match(/\d{4}/g) || [];
+    // remove anos e lixo comum
+    if (num >= 2000 && num <= 2100) return false;
 
-    let resultados = [];
+    // mantém apenas milhares válidas
+    return n.length === 4;
+  });
+}
 
-    for (let i = 0; i < numeros.length; i += 5) {
+function agruparResultados(numeros) {
+  let resultados = [];
+
+  for (let i = 0; i < numeros.length; i += 5) {
+    if (numeros[i + 4]) {
       resultados.push({
         horario: "extração",
         p1: numeros[i],
@@ -62,14 +67,36 @@ async function fallbackSimples(url) {
         p5: numeros[i + 4]
       });
     }
+  }
 
-    return resultados;
+  return resultados;
+}
 
-  } catch {
+async function fallbackSimples(url) {
+  try {
+    const { data } = await axios.get(url, {
+      headers: { "User-Agent": "Mozilla/5.0" }
+    });
+
+    // pega números de 4 dígitos
+    let numeros = data.match(/\d{4}/g) || [];
+
+    // limpa lixo
+    numeros = limparNumeros(numeros);
+
+    // remove duplicados
+    numeros = [...new Set(numeros)];
+
+    // agrupa corretamente
+    const resultados = agruparResultados(numeros);
+
+    return resultados.slice(0, 10); // limita
+
+  } catch (e) {
+    console.log("Erro fallback:", e.message);
     return [];
   }
 }
-
 // ================= CARREGAR =================
 async function carregarTudo() {
   const agora = Date.now();
