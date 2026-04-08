@@ -12,51 +12,38 @@ const PORT = process.env.PORT || 3000;
 let cache = null;
 let tempo = 0;
 
-// ================= FEDERAL =================
-async function pegarFederal() {
-  try {
-    const { data } = await axios.get(
-      "https://servicebus2.caixa.gov.br/portaldeloterias/api/federal",
-      { headers: { "User-Agent": "Mozilla/5.0" } }
-    );
+// ================= DATAS =================
+function gerarDatas(qtd = 7) {
+  const datas = [];
 
-    const sorteio = data.listaSorteios?.[0];
+  for (let i = 0; i < qtd; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
 
-    if (!sorteio || !sorteio.dezenas || sorteio.dezenas.length < 5)
-      return [];
+    const dia = String(d.getDate()).padStart(2, "0");
+    const mes = String(d.getMonth() + 1).padStart(2, "0");
+    const ano = d.getFullYear();
 
-    return [{
-      horario: "Federal",
-      p1: sorteio.dezenas[0],
-      p2: sorteio.dezenas[1],
-      p3: sorteio.dezenas[2],
-      p4: sorteio.dezenas[3],
-      p5: sorteio.dezenas[4]
-    }];
-
-  } catch (e) {
-    console.log("Erro Federal:", e.message);
-    return [];
+    datas.push(`${ano}-${mes}-${dia}`);
   }
+
+  return datas;
 }
 
-// ================= RESULTADO FACIL (AUTO DETECÇÃO) =================
-async function pegarResultados() {
+// ================= SCRAPER PADRÃO =================
+async function scraperBanca(url) {
   try {
-    const { data } = await axios.get(
-      "https://www.resultadofacil.com.br/",
-      { headers: { "User-Agent": "Mozilla/5.0" } }
-    );
+    const { data } = await axios.get(url, {
+      headers: { "User-Agent": "Mozilla/5.0" }
+    });
 
     const $ = cheerio.load(data);
-
-    const resultadoFinal = {};
+    const resultados = [];
 
     $("h2, h3").each((i, el) => {
-      const tituloOriginal = $(el).text().trim();
-      const titulo = tituloOriginal.toLowerCase();
+      const titulo = $(el).text().trim();
 
-      const tabela = $(el).next("table");
+      const tabela = $(el).nextAll("table").first();
       if (!tabela.length) return;
 
       const nums = [];
@@ -68,53 +55,82 @@ async function pegarResultados() {
         if (match) nums.push(match[0]);
       });
 
-      if (nums.length < 5) return;
-
-      // ===== DETECTAR HORÁRIO =====
-      let horario = "EXTRAÇÃO";
-
-      const horariosPadrao = [
-        "ptm", "pt", "ptv", "ptn",
-        "coruja", "manhã", "tarde", "noite"
-      ];
-
-      for (let h of horariosPadrao) {
-        if (titulo.includes(h)) {
-          horario = h.toUpperCase();
-          break;
-        }
+      if (nums.length >= 5) {
+        resultados.push({
+          horario: titulo,
+          p1: nums[0],
+          p2: nums[1],
+          p3: nums[2],
+          p4: nums[3],
+          p5: nums[4]
+        });
       }
-
-      // ===== DETECTAR BANCA =====
-      let banca = "outros";
-
-      if (titulo.includes("rio")) banca = "rio";
-      else if (titulo.includes("look")) banca = "look";
-      else if (titulo.includes("nacional")) banca = "nacional";
-      else if (titulo.includes("bahia")) banca = "bahia";
-      else if (titulo.includes("goias")) banca = "goias";
-      else if (titulo.includes("minas")) banca = "minas";
-
-      if (!resultadoFinal[banca]) {
-        resultadoFinal[banca] = [];
-      }
-
-      resultadoFinal[banca].push({
-        horario,
-        titulo: tituloOriginal,
-        p1: nums[0],
-        p2: nums[1],
-        p3: nums[2],
-        p4: nums[3],
-        p5: nums[4]
-      });
     });
 
-    return resultadoFinal;
+    return resultados;
 
   } catch (e) {
-    console.log("Erro scraping:", e.message);
-    return {};
+    console.log("Erro:", url);
+    return [];
+  }
+}
+
+// ================= BANCAS =================
+async function pegarBancas() {
+  const datas = gerarDatas(7);
+
+  const resultado = {
+    rio: {},
+    look: {},
+    nacional: {}
+  };
+
+  for (let data of datas) {
+
+    // URLs com data
+    const urls = {
+      rio: `https://www.resultadofacil.com.br/resultado-do-jogo-do-bicho-rio/${data}`,
+      look: `https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje`,
+      nacional: `https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje`
+    };
+
+    // RIO (com data)
+    resultado.rio[data] = await scraperBanca(urls.rio);
+
+    // LOOK (site não usa data na URL, então repete)
+    resultado.look[data] = await scraperBanca(urls.look);
+
+    // NACIONAL (mesma coisa)
+    resultado.nacional[data] = await scraperBanca(urls.nacional);
+  }
+
+  return resultado;
+}
+
+// ================= FEDERAL =================
+async function pegarFederal() {
+  try {
+    const { data } = await axios.get(
+      "https://servicebus2.caixa.gov.br/portaldeloterias/api/federal",
+      { headers: { "User-Agent": "Mozilla/5.0" } }
+    );
+
+    const sorteio = data.listaSorteios?.[0];
+
+    if (!sorteio || !sorteio.dezenas) return [];
+
+    return [{
+      horario: "Federal",
+      data: sorteio.dataApuracao,
+      p1: sorteio.dezenas[0],
+      p2: sorteio.dezenas[1],
+      p3: sorteio.dezenas[2],
+      p4: sorteio.dezenas[3],
+      p5: sorteio.dezenas[4]
+    }];
+
+  } catch {
+    return [];
   }
 }
 
@@ -122,19 +138,16 @@ async function pegarResultados() {
 async function carregarTudo() {
   const agora = Date.now();
 
-  if (cache && agora - tempo < 60000) {
-    console.log("⚡ cache");
-    return cache;
-  }
+  if (cache && agora - tempo < 60000) return cache;
 
-  console.log("🔄 atualizando...");
+  console.log("🔄 Atualizando...");
 
-  const dadosSite = await pegarResultados();
+  const bancas = await pegarBancas();
   const federal = await pegarFederal();
 
   cache = {
     atualizado: new Date().toLocaleString(),
-    ...dadosSite,
+    ...bancas,
     federal
   };
 
@@ -149,14 +162,6 @@ app.get("/resultados", async (req, res) => {
   res.json(dados);
 });
 
-app.get("/", (req, res) => {
-  res.json({
-    status: "ok",
-    rota: "/resultados"
-  });
-});
-
-// ================= START =================
 app.listen(PORT, () => {
   console.log("🚀 Rodando na porta", PORT);
 });
