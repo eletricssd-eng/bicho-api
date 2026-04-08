@@ -8,7 +8,7 @@ app.use(cors());
 const PORT = process.env.PORT || 3000;
 
 // ================= CONFIG =================
-const YT_KEY = "SUA_API_KEY_AQUI";
+const YT_KEY = "AIzaSyAGQ1mYfOxWm97S90nR0Hew-ukg3VdU4vE";
 
 // ================= CANAL BOM PALPITE =================
 const canais = [
