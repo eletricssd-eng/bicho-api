@@ -1,6 +1,7 @@
 import express from "express";
 import axios from "axios";
 import cors from "cors";
+import * as cheerio from "cheerio";
 
 const app = express();
 app.use(cors());
@@ -10,7 +11,7 @@ const PORT = process.env.PORT || 3000;
 // ================= CONFIG =================
 const YT_KEY = "AIzaSyAGQ1mYfOxWm97S90nR0Hew-ukg3VdU4vE";
 
-// ================= CANAL BOM PALPITE =================
+// canais confiáveis (adicione mais se quiser)
 const canais = [
   "UC0cRrQj7hX9r0x0d9wq0R8A"
 ];
@@ -19,34 +20,68 @@ const canais = [
 let cache = null;
 let tempo = 0;
 
-// ================= FILTRO =================
-function numerosValidos(nums) {
-  return nums.filter(n => {
-    const num = parseInt(n);
-
-    if (num >= 2000 && num <= 2100) return false;
-    if (/^(\d)\1{3}$/.test(n)) return false;
-
-    return true;
-  });
+// ================= UTIL =================
+function limparNumeros(nums) {
+  return nums.filter(n => /^\d{4}$/.test(n));
 }
 
-// ================= SCRAPER LOOK =================
-async function scraperSimples(url) {
+// ================= SCRAPER RESULTADO FACIL =================
+async function pegarNacional() {
   try {
-    const { data } = await axios.get(url, {
-      headers: { "User-Agent": "Mozilla/5.0" }
+    const { data } = await axios.get(
+      "https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje",
+      { headers: { "User-Agent": "Mozilla/5.0" } }
+    );
+
+    const $ = cheerio.load(data);
+    const nums = [];
+
+    $("table tr").each((i, el) => {
+      const texto = $(el).text();
+
+      if (texto.includes("1º") || texto.includes("2º") || texto.includes("3º")) {
+        const match = texto.match(/\d{4}/);
+        if (match) nums.push(match[0]);
+      }
     });
-
-    let nums = data.match(/\d{4}/g) || [];
-
-    nums = numerosValidos(nums);
-    nums = [...new Set(nums)];
 
     if (nums.length < 5) return [];
 
     return [{
-      horario: "extração",
+      horario: "Nacional",
+      p1: nums[0],
+      p2: nums[1],
+      p3: nums[2],
+      p4: nums[3],
+      p5: nums[4]
+    }];
+
+  } catch (e) {
+    console.log("Erro Nacional:", e.message);
+    return [];
+  }
+}
+
+// ================= LOOK =================
+async function pegarLook() {
+  try {
+    const { data } = await axios.get("https://lookgoias.com/", {
+      headers: { "User-Agent": "Mozilla/5.0" }
+    });
+
+    const $ = cheerio.load(data);
+    const nums = [];
+
+    $("table tr").each((i, el) => {
+      const texto = $(el).text();
+      const match = texto.match(/\d{4}/);
+      if (match) nums.push(match[0]);
+    });
+
+    if (nums.length < 5) return [];
+
+    return [{
+      horario: "Look",
       p1: nums[0],
       p2: nums[1],
       p3: nums[2],
@@ -64,14 +99,13 @@ async function pegarFederal() {
   try {
     const { data } = await axios.get(
       "https://servicebus2.caixa.gov.br/portaldeloterias/api/federal",
-      {
-        headers: { "User-Agent": "Mozilla/5.0" }
-      }
+      { headers: { "User-Agent": "Mozilla/5.0" } }
     );
 
     const sorteio = data.listaSorteios?.[0];
 
-    if (!sorteio) return [];
+    if (!sorteio || !sorteio.dezenas || sorteio.dezenas.length < 5)
+      return [];
 
     return [{
       horario: "Federal",
@@ -88,7 +122,7 @@ async function pegarFederal() {
   }
 }
 
-// ================= YOUTUBE POR CANAL =================
+// ================= YOUTUBE =================
 async function buscarPorCanal(channelId) {
   try {
     const res = await axios.get(
@@ -96,7 +130,7 @@ async function buscarPorCanal(channelId) {
       {
         params: {
           part: "snippet",
-          channelId: channelId,
+          channelId,
           order: "date",
           maxResults: 10,
           key: YT_KEY
@@ -106,22 +140,26 @@ async function buscarPorCanal(channelId) {
 
     return res.data.items;
 
-  } catch (e) {
-    console.log("Erro canal:", e.message);
+  } catch {
     return [];
   }
 }
 
-// ================= EXTRAÇÃO =================
 function extrairResultados(texto) {
-  let nums = texto.match(/\d{4}/g) || [];
+  const linhas = texto.split("\n");
+  const nums = [];
 
-  nums = numerosValidos(nums);
+  for (let linha of linhas) {
+    if (linha.includes("1") || linha.includes("2") || linha.includes("3")) {
+      const match = linha.match(/\d{4}/);
+      if (match) nums.push(match[0]);
+    }
+  }
 
   if (nums.length < 5) return null;
 
   return {
-    horario: "YouTube",
+    horario: "Rio",
     p1: nums[0],
     p2: nums[1],
     p3: nums[2],
@@ -130,25 +168,16 @@ function extrairResultados(texto) {
   };
 }
 
-// ================= PEGAR RESULTADO YOUTUBE =================
-async function pegarYouTube() {
+async function pegarRio() {
   for (let canal of canais) {
     const videos = await buscarPorCanal(canal);
 
     for (let v of videos) {
-      const titulo = v.snippet.title;
-      const descricao = v.snippet.description || "";
-
-      const texto = titulo + " " + descricao;
-
-      console.log("🔎 título:", titulo);
+      const texto = v.snippet.title + " " + v.snippet.description;
 
       const resultado = extrairResultados(texto);
 
-      if (resultado) {
-        console.log("✅ BOM PALPITE OK");
-        return [resultado];
-      }
+      if (resultado) return [resultado];
     }
   }
 
@@ -159,32 +188,22 @@ async function pegarYouTube() {
 async function carregarTudo() {
   const agora = Date.now();
 
-  if (cache && agora - tempo < 60000) {
-    console.log("⚡ cache");
-    return cache;
-  }
+  if (cache && agora - tempo < 60000) return cache;
 
-  console.log("🔄 atualizando...");
+  console.log("🔄 Atualizando...");
 
-  // LOOK
-  let look = await scraperSimples("https://lookgoias.com/");
-
-  // RIO (YouTube canal)
-  let rio = await pegarYouTube();
-
-  // FEDERAL
-  let federal = await pegarFederal();
-
-  // fallback LOOK
-  if (look.length === 0 || look[0]?.p1 === "2025") {
-    console.log("⚠️ fallback YouTube LOOK");
-    look = await pegarYouTube();
-  }
+  const [look, rio, nacional, federal] = await Promise.all([
+    pegarLook(),
+    pegarRio(),
+    pegarNacional(),
+    pegarFederal()
+  ]);
 
   cache = {
     atualizado: new Date().toLocaleString(),
     rio,
     look,
+    nacional,
     federal
   };
 
@@ -202,8 +221,7 @@ app.get("/resultados", async (req, res) => {
 app.get("/", (req, res) => {
   res.json({
     status: "ok",
-    msg: "API rodando 🚀",
-    rota: "/resultados"
+    api: "/resultados"
   });
 });
 
