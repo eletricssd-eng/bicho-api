@@ -26,14 +26,35 @@ async function fonteAPI() {
   }
 }
 
-// ================= SCRAPER SIMPLES =================
+// ================= FILTRO INTELIGENTE =================
+function numerosValidos(nums) {
+  return nums.filter(n => {
+    const num = parseInt(n);
+
+    // remove anos
+    if (num >= 2000 && num <= 2100) return false;
+
+    // remove tipo 1111, 2222
+    if (/^(\d)\1{3}$/.test(n)) return false;
+
+    return true;
+  });
+}
+
+// ================= SCRAPER MELHORADO =================
 async function scraperSimples(url) {
   try {
     const { data } = await axios.get(url, {
       headers: { "User-Agent": "Mozilla/5.0" }
     });
 
-    const nums = data.match(/\d{4}/g) || [];
+    let nums = data.match(/\d{4}/g) || [];
+
+    // 🔥 limpar lixo
+    nums = numerosValidos(nums);
+
+    // 🔥 remover duplicados
+    nums = [...new Set(nums)];
 
     if (nums.length < 5) return [];
 
@@ -150,15 +171,15 @@ async function carregarTudo() {
   }
 
   // 3️⃣ YOUTUBE fallback FINAL
-  if (rio.length === 0) {
-    console.log("🔴 fallback YouTube RIO");
-    rio = await pegarYouTube();
-  }
+  if (rio.length === 0 || rio[0]?.p1 === "2025") {
+  console.log("⚠️ lixo detectado → YouTube RIO");
+  rio = await pegarYouTube();
+}
 
-  if (look.length === 0) {
-    console.log("🟡 fallback YouTube LOOK");
-    look = await pegarYouTube();
-  }
+  if (look.length === 0 || look[0]?.p1 === "2025") {
+  console.log("⚠️ lixo detectado → YouTube LOOK");
+  look = await pegarYouTube();
+}
 
   cache = {
     atualizado: new Date().toLocaleString(),
