@@ -8,7 +8,7 @@ app.use(cors());
 const PORT = process.env.PORT || 3000;
 
 // ================= CONFIG =================
-const YT_KEY = "SUA_API_KEY_AQUI"; // ⚠️ troque sua chave
+const YT_KEY = "AIzaSyAGQ1mYfOxWm97S90nR0Hew-ukg3VdU4vE"; // 🔥 coloque sua chave
 
 // ================= CACHE =================
 let cache = null;
@@ -24,46 +24,6 @@ function numerosValidos(nums) {
 
     return true;
   });
-}
-
-// ================= API BASE =================
-async function fonteAPI() {
-  try {
-    const { data } = await axios.get("https://bicho-api.onrender.com", {
-      timeout: 5000
-    });
-    return data;
-  } catch {
-    return null;
-  }
-}
-
-// ================= SCRAPER =================
-async function scraperSimples(url) {
-  try {
-    const { data } = await axios.get(url, {
-      headers: { "User-Agent": "Mozilla/5.0" }
-    });
-
-    let nums = data.match(/\d{4}/g) || [];
-
-    nums = numerosValidos(nums);
-    nums = [...new Set(nums)];
-
-    if (nums.length < 5) return [];
-
-    return [{
-      horario: "extração",
-      p1: nums[0],
-      p2: nums[1],
-      p3: nums[2],
-      p4: nums[3],
-      p5: nums[4]
-    }];
-
-  } catch {
-    return [];
-  }
 }
 
 // ================= FEDERAL =================
@@ -95,6 +55,34 @@ async function pegarFederal() {
   }
 }
 
+// ================= SCRAPER =================
+async function scraperSimples(url) {
+  try {
+    const { data } = await axios.get(url, {
+      headers: { "User-Agent": "Mozilla/5.0" }
+    });
+
+    let nums = data.match(/\d{4}/g) || [];
+
+    nums = numerosValidos(nums);
+    nums = [...new Set(nums)];
+
+    if (nums.length < 5) return [];
+
+    return [{
+      horario: "extração",
+      p1: nums[0],
+      p2: nums[1],
+      p3: nums[2],
+      p4: nums[3],
+      p5: nums[4]
+    }];
+
+  } catch {
+    return [];
+  }
+}
+
 // ================= YOUTUBE =================
 async function buscarYouTube() {
   try {
@@ -103,8 +91,8 @@ async function buscarYouTube() {
       {
         params: {
           part: "snippet",
-          q: "resultado jogo do bicho hoje rio goias federal",
-          maxResults: 5,
+          q: "resultado jogo do bicho rio 1º 2º 3º 4º 5º hoje",
+          maxResults: 10,
           key: YT_KEY
         }
       }
@@ -118,8 +106,11 @@ async function buscarYouTube() {
   }
 }
 
+// ================= EXTRAÇÃO INTELIGENTE =================
 function extrairResultados(texto) {
-  const nums = texto.match(/\d{4}/g) || [];
+  let nums = texto.match(/\d{4}/g) || [];
+
+  nums = numerosValidos(nums);
 
   if (nums.length < 5) return null;
 
@@ -133,35 +124,24 @@ function extrairResultados(texto) {
   };
 }
 
+// ================= PEGAR YOUTUBE =================
 async function pegarYouTube() {
   const videos = await buscarYouTube();
 
   for (let v of videos) {
     const titulo = v.snippet.title;
 
+    console.log("🔎 título:", titulo);
+
     const resultado = extrairResultados(titulo);
 
     if (resultado) {
-      console.log("✅ YouTube:", titulo);
+      console.log("✅ YouTube OK:", titulo);
       return [resultado];
     }
   }
 
   return [];
-}
-
-// ================= ORGANIZAR =================
-function organizar(lista) {
-  if (!Array.isArray(lista)) return [];
-
-  return lista.map(item => ({
-    horario: item.horario || item.nome || "N/D",
-    p1: item.p1 || item["1"] || "-",
-    p2: item.p2 || item["2"] || "-",
-    p3: item.p3 || item["3"] || "-",
-    p4: item.p4 || item["4"] || "-",
-    p5: item.p5 || item["5"] || "-"
-  }));
 }
 
 // ================= PRINCIPAL =================
@@ -175,26 +155,16 @@ async function carregarTudo() {
 
   console.log("🔄 atualizando...");
 
-  // API
-  const base = await fonteAPI();
+  // LOOK via scraper
+  let look = await scraperSimples("https://lookgoias.com/");
 
-  let rio = organizar(base?.rio || []);
-  let look = organizar(base?.look || []);
+  // RIO via YouTube
+  let rio = await pegarYouTube();
 
-  // FEDERAL DIRETO
+  // FEDERAL oficial
   let federal = await pegarFederal();
 
-  // SCRAPER fallback
-  if (look.length === 0) {
-    console.log("🟡 fallback scraper LOOK");
-    look = await scraperSimples("https://lookgoias.com/");
-  }
-
-  // 🔥 RIO DIRETO DO YOUTUBE (mais confiável)
-  console.log("🔴 usando YouTube como fonte RIO");
-  rio = await pegarYouTube();
-
-  // fallback extra se LOOK vier lixo
+  // fallback LOOK se lixo
   if (look.length === 0 || look[0]?.p1 === "2025") {
     console.log("⚠️ fallback YouTube LOOK");
     look = await pegarYouTube();
@@ -221,7 +191,7 @@ app.get("/resultados", async (req, res) => {
 app.get("/", (req, res) => {
   res.json({
     status: "ok",
-    msg: "API COMPLETA rodando 🚀",
+    msg: "API YOUTUBE + SCRAPER rodando 🚀",
     rota: "/resultados"
   });
 });
