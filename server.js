@@ -7,34 +7,58 @@ app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
-// ================= MULTI FONTES =================
+// ================= FONTES =================
 const fontes = [
-  "https://bicho-api.onrender.com",
-  "https://api.allorigins.win/raw?url=https://bicho-api.onrender.com"
+  {
+    nome: "principal",
+    url: "https://bicho-api.onrender.com"
+  },
+  {
+    nome: "proxy",
+    url: "https://api.allorigins.win/raw?url=https://bicho-api.onrender.com"
+  }
 ];
+
+// ================= VALIDAR DADOS =================
+function dadosValidos(d) {
+  if (!d) return false;
+
+  const temDados =
+    (d.rio && d.rio.length > 0) ||
+    (d.look && d.look.length > 0) ||
+    (d.nacional && d.nacional.length > 0) ||
+    (d.federal && d.federal.length > 0);
+
+  return temDados;
+}
 
 // ================= BUSCAR =================
 async function buscarResultados() {
-  for (let url of fontes) {
+  for (let fonte of fontes) {
     try {
-      const res = await axios.get(url, { timeout: 5000 });
+      const res = await axios.get(fonte.url, { timeout: 8000 });
 
-      if (res.data && Object.keys(res.data).length > 0) {
-        console.log("Fonte OK:", url);
+      if (dadosValidos(res.data)) {
+        console.log("✅ Fonte OK:", fonte.nome);
 
         return {
-          fonte: url,
+          fonte: fonte.nome,
+          atualizado: new Date().toLocaleString(),
           ...res.data
         };
       }
 
+      console.log("⚠️ Fonte sem dados:", fonte.nome);
+
     } catch (e) {
-      console.log("Falha:", url);
+      console.log("❌ Falha:", fonte.nome);
     }
   }
 
+  // fallback
   return {
     fonte: "offline",
+    atualizado: new Date().toLocaleString(),
     rio: [],
     look: [],
     nacional: [],
@@ -48,12 +72,16 @@ app.get("/resultados", async (req, res) => {
   res.json(dados);
 });
 
-// ================= KEEP ALIVE =================
+// ================= STATUS =================
 app.get("/", (req, res) => {
-  res.send("API rodando 🚀");
+  res.json({
+    status: "ok",
+    mensagem: "API rodando 🚀",
+    endpoint: "/resultados"
+  });
 });
 
 // ================= START =================
 app.listen(PORT, () => {
-  console.log("Rodando na porta", PORT);
+  console.log("🚀 Rodando na porta", PORT);
 });
