@@ -8,91 +8,9 @@ app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
-// ================= CONFIG =================
-const YT_KEY = "AIzaSyAGQ1mYfOxWm97S90nR0Hew-ukg3VdU4vE";
-
-// canais confiáveis (adicione mais se quiser)
-const canais = [
-  "UC0cRrQj7hX9r0x0d9wq0R8A"
-];
-
 // ================= CACHE =================
 let cache = null;
 let tempo = 0;
-
-// ================= UTIL =================
-function limparNumeros(nums) {
-  return nums.filter(n => /^\d{4}$/.test(n));
-}
-
-// ================= SCRAPER RESULTADO FACIL =================
-async function pegarNacional() {
-  try {
-    const { data } = await axios.get(
-      "https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje",
-      { headers: { "User-Agent": "Mozilla/5.0" } }
-    );
-
-    const $ = cheerio.load(data);
-    const nums = [];
-
-    $("table tr").each((i, el) => {
-      const texto = $(el).text();
-
-      if (texto.includes("1º") || texto.includes("2º") || texto.includes("3º")) {
-        const match = texto.match(/\d{4}/);
-        if (match) nums.push(match[0]);
-      }
-    });
-
-    if (nums.length < 5) return [];
-
-    return [{
-      horario: "Nacional",
-      p1: nums[0],
-      p2: nums[1],
-      p3: nums[2],
-      p4: nums[3],
-      p5: nums[4]
-    }];
-
-  } catch (e) {
-    console.log("Erro Nacional:", e.message);
-    return [];
-  }
-}
-
-// ================= LOOK =================
-async function pegarLook() {
-  try {
-    const { data } = await axios.get("https://lookgoias.com/", {
-      headers: { "User-Agent": "Mozilla/5.0" }
-    });
-
-    const $ = cheerio.load(data);
-    const nums = [];
-
-    $("table tr").each((i, el) => {
-      const texto = $(el).text();
-      const match = texto.match(/\d{4}/);
-      if (match) nums.push(match[0]);
-    });
-
-    if (nums.length < 5) return [];
-
-    return [{
-      horario: "Look",
-      p1: nums[0],
-      p2: nums[1],
-      p3: nums[2],
-      p4: nums[3],
-      p5: nums[4]
-    }];
-
-  } catch {
-    return [];
-  }
-}
 
 // ================= FEDERAL =================
 async function pegarFederal() {
@@ -122,88 +40,86 @@ async function pegarFederal() {
   }
 }
 
-// ================= YOUTUBE =================
-async function buscarPorCanal(channelId) {
+// ================= RESULTADO FACIL (TUDO) =================
+async function pegarResultados() {
   try {
-    const res = await axios.get(
-      "https://www.googleapis.com/youtube/v3/search",
-      {
-        params: {
-          part: "snippet",
-          channelId,
-          order: "date",
-          maxResults: 10,
-          key: YT_KEY
-        }
-      }
+    const { data } = await axios.get(
+      "https://www.resultadofacil.com.br/",
+      { headers: { "User-Agent": "Mozilla/5.0" } }
     );
 
-    return res.data.items;
+    const $ = cheerio.load(data);
 
-  } catch {
-    return [];
+    const resultadoFinal = {
+      rio: [],
+      look: [],
+      nacional: []
+    };
+
+    $("h3").each((i, el) => {
+      const tituloOriginal = $(el).text().trim();
+      const titulo = tituloOriginal.toLowerCase();
+
+      const tabela = $(el).next("table");
+      if (!tabela.length) return;
+
+      const nums = [];
+
+      tabela.find("tr").each((i, tr) => {
+        const texto = $(tr).text();
+        const match = texto.match(/\d{4}/);
+
+        if (match) nums.push(match[0]);
+      });
+
+      if (nums.length < 5) return;
+
+      const item = {
+        horario: tituloOriginal,
+        p1: nums[0],
+        p2: nums[1],
+        p3: nums[2],
+        p4: nums[3],
+        p5: nums[4]
+      };
+
+      // ===== SEPARAÇÃO AUTOMÁTICA =====
+      if (titulo.includes("rio")) {
+        resultadoFinal.rio.push(item);
+      } else if (titulo.includes("look")) {
+        resultadoFinal.look.push(item);
+      } else if (titulo.includes("nacional")) {
+        resultadoFinal.nacional.push(item);
+      }
+    });
+
+    return resultadoFinal;
+
+  } catch (e) {
+    console.log("Erro scraping:", e.message);
+    return { rio: [], look: [], nacional: [] };
   }
-}
-
-function extrairResultados(texto) {
-  const linhas = texto.split("\n");
-  const nums = [];
-
-  for (let linha of linhas) {
-    if (linha.includes("1") || linha.includes("2") || linha.includes("3")) {
-      const match = linha.match(/\d{4}/);
-      if (match) nums.push(match[0]);
-    }
-  }
-
-  if (nums.length < 5) return null;
-
-  return {
-    horario: "Rio",
-    p1: nums[0],
-    p2: nums[1],
-    p3: nums[2],
-    p4: nums[3],
-    p5: nums[4]
-  };
-}
-
-async function pegarRio() {
-  for (let canal of canais) {
-    const videos = await buscarPorCanal(canal);
-
-    for (let v of videos) {
-      const texto = v.snippet.title + " " + v.snippet.description;
-
-      const resultado = extrairResultados(texto);
-
-      if (resultado) return [resultado];
-    }
-  }
-
-  return [];
 }
 
 // ================= PRINCIPAL =================
 async function carregarTudo() {
   const agora = Date.now();
 
-  if (cache && agora - tempo < 60000) return cache;
+  if (cache && agora - tempo < 60000) {
+    console.log("⚡ cache");
+    return cache;
+  }
 
-  console.log("🔄 Atualizando...");
+  console.log("🔄 atualizando...");
 
-  const [look, rio, nacional, federal] = await Promise.all([
-    pegarLook(),
-    pegarRio(),
-    pegarNacional(),
-    pegarFederal()
-  ]);
+  const dadosSite = await pegarResultados();
+  const federal = await pegarFederal();
 
   cache = {
     atualizado: new Date().toLocaleString(),
-    rio,
-    look,
-    nacional,
+    rio: dadosSite.rio,
+    look: dadosSite.look,
+    nacional: dadosSite.nacional,
     federal
   };
 
@@ -221,7 +137,7 @@ app.get("/resultados", async (req, res) => {
 app.get("/", (req, res) => {
   res.json({
     status: "ok",
-    api: "/resultados"
+    rota: "/resultados"
   });
 });
 
