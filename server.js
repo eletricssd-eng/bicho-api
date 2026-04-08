@@ -11,127 +11,134 @@ const PORT = process.env.PORT || 3000;
 let cache = null;
 let tempo = 0;
 
-// ================= PARSER =================
-function organizarResultados(lista) {
-  if (!Array.isArray(lista)) return [];
-
-  return lista.map(item => ({
-    horario: item.horario || item.nome || "N/D",
-    p1: item.p1 || item["1"] || "-",
-    p2: item.p2 || item["2"] || "-",
-    p3: item.p3 || item["3"] || "-",
-    p4: item.p4 || item["4"] || "-",
-    p5: item.p5 || item["5"] || "-"
-  }));
-}
-
-// ================= FONTE PRINCIPAL =================
-async function fontePrincipal() {
+// ================= RIO =================
+async function pegarRio() {
   try {
-    const { data } = await axios.get("https://bicho-api.onrender.com", {
-      timeout: 8000,
-      headers: { "User-Agent": "Mozilla/5.0" }
+    const { data } = await axios.get("https://www.deunoposte.com/", {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      timeout: 10000
     });
 
-    return data;
+    const linhas = data.split("\n");
+    let resultados = [];
 
-  } catch {
-    return null;
-  }
-}
+    linhas.forEach(linha => {
+      if (
+        linha.includes("1º") &&
+        linha.includes("2º") &&
+        linha.includes("3º")
+      ) {
+        const nums = linha.match(/\d{4}/g);
 
-// ================= SCRAPER FALLBACK =================
-function limparNumeros(numeros) {
-  return numeros.filter(n => {
-    const num = parseInt(n);
-
-    // remove anos e lixo comum
-    if (num >= 2000 && num <= 2100) return false;
-
-    // mantém apenas milhares válidas
-    return n.length === 4;
-  });
-}
-
-function agruparResultados(numeros) {
-  let resultados = [];
-
-  for (let i = 0; i < numeros.length; i += 5) {
-    if (numeros[i + 4]) {
-      resultados.push({
-        horario: "extração",
-        p1: numeros[i],
-        p2: numeros[i + 1],
-        p3: numeros[i + 2],
-        p4: numeros[i + 3],
-        p5: numeros[i + 4]
-      });
-    }
-  }
-
-  return resultados;
-}
-
-async function fallbackSimples(url) {
-  try {
-    const { data } = await axios.get(url, {
-      headers: { "User-Agent": "Mozilla/5.0" }
+        if (nums && nums.length >= 5) {
+          resultados.push({
+            horario: "PT",
+            p1: nums[0],
+            p2: nums[1],
+            p3: nums[2],
+            p4: nums[3],
+            p5: nums[4]
+          });
+        }
+      }
     });
 
-    // pega números de 4 dígitos
-    let numeros = data.match(/\d{4}/g) || [];
-
-    // limpa lixo
-    numeros = limparNumeros(numeros);
-
-    // remove duplicados
-    numeros = [...new Set(numeros)];
-
-    // agrupa corretamente
-    const resultados = agruparResultados(numeros);
-
-    return resultados.slice(0, 10); // limita
+    return resultados.slice(0, 5);
 
   } catch (e) {
-    console.log("Erro fallback:", e.message);
+    console.log("Erro Rio:", e.message);
     return [];
   }
 }
-// ================= CARREGAR =================
+
+// ================= LOOK GO =================
+async function pegarLook() {
+  try {
+    const { data } = await axios.get("https://lookgoias.com/", {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      timeout: 10000
+    });
+
+    const linhas = data.split("\n");
+    let resultados = [];
+
+    linhas.forEach(linha => {
+      if (linha.includes("1º")) {
+        const nums = linha.match(/\d{4}/g);
+
+        if (nums && nums.length >= 5) {
+          resultados.push({
+            horario: "GO",
+            p1: nums[0],
+            p2: nums[1],
+            p3: nums[2],
+            p4: nums[3],
+            p5: nums[4]
+          });
+        }
+      }
+    });
+
+    return resultados.slice(0, 5);
+
+  } catch (e) {
+    console.log("Erro Look:", e.message);
+    return [];
+  }
+}
+
+// ================= FEDERAL =================
+async function pegarFederal() {
+  try {
+    const { data } = await axios.get(
+      "https://servicebus2.caixa.gov.br/portaldeloterias/api/federal",
+      {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        timeout: 10000
+      }
+    );
+
+    const sorteio = data.listaSorteios?.[0];
+
+    if (!sorteio) return [];
+
+    return [{
+      horario: "Federal",
+      p1: sorteio.dezenas[0],
+      p2: sorteio.dezenas[1],
+      p3: sorteio.dezenas[2],
+      p4: sorteio.dezenas[3],
+      p5: sorteio.dezenas[4]
+    }];
+
+  } catch (e) {
+    console.log("Erro Federal:", e.message);
+    return [];
+  }
+}
+
+// ================= CARREGAR TUDO =================
 async function carregarTudo() {
   const agora = Date.now();
 
   if (cache && agora - tempo < 60000) {
-    console.log("⚡ cache");
+    console.log("⚡ usando cache");
     return cache;
   }
 
-  console.log("🔄 atualizando...");
+  console.log("🔄 atualizando dados...");
 
-  const base = await fontePrincipal();
-
-  let rio = organizarResultados(base?.rio || []);
-  let look = organizarResultados(base?.look || []);
-  let federal = organizarResultados(base?.federal || []);
-  let nacional = organizarResultados(base?.nacional || []);
-
-  // fallback se vazio
-  if (rio.length === 0) {
-    console.log("⚠️ fallback RIO");
-    rio = await fallbackSimples("https://www.deunoposte.com/");
-  }
-
-  if (look.length === 0) {
-    console.log("⚠️ fallback LOOK");
-    look = await fallbackSimples("https://lookgoias.com/");
-  }
+  const [rio, look, federal] = await Promise.all([
+    pegarRio(),
+    pegarLook(),
+    pegarFederal()
+  ]);
 
   cache = {
     atualizado: new Date().toLocaleString(),
     rio,
     look,
-    federal,
-    nacional
+    federal
   };
 
   tempo = agora;
@@ -148,7 +155,7 @@ app.get("/resultados", async (req, res) => {
 app.get("/", (req, res) => {
   res.json({
     status: "ok",
-    msg: "API PROFISSIONAL rodando 🚀",
+    msg: "API REAL rodando 🚀",
     rota: "/resultados"
   });
 });
