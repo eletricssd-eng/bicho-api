@@ -7,81 +7,120 @@ app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
-// ================= FONTES =================
-const fontes = [
-  {
-    nome: "principal",
-    url: "https://bicho-api.onrender.com"
-  },
-  {
-    nome: "proxy",
-    url: "https://api.allorigins.win/raw?url=https://bicho-api.onrender.com"
-  }
-];
+// ================= FONTES POR BANCA =================
+const FONTES = {
+  rio: [
+    "https://bicho-api.onrender.com/rio",
+    "https://api.allorigins.win/raw?url=https://bicho-api.onrender.com/rio"
+  ],
+  look: [
+    "https://bicho-api.onrender.com/look",
+    "https://api.allorigins.win/raw?url=https://bicho-api.onrender.com/look"
+  ],
+  federal: [
+    "https://bicho-api.onrender.com/federal",
+    "https://api.allorigins.win/raw?url=https://bicho-api.onrender.com/federal"
+  ],
+  geral: [
+    "https://bicho-api.onrender.com",
+    "https://api.allorigins.win/raw?url=https://bicho-api.onrender.com"
+  ]
+};
 
-// ================= VALIDAR DADOS =================
-function dadosValidos(d) {
-  if (!d) return false;
-
-  const temDados =
-    (d.rio && d.rio.length > 0) ||
-    (d.look && d.look.length > 0) ||
-    (d.nacional && d.nacional.length > 0) ||
-    (d.federal && d.federal.length > 0);
-
-  return temDados;
+// ================= VALIDAR =================
+function valido(arr) {
+  return Array.isArray(arr) && arr.length > 0;
 }
 
-// ================= BUSCAR =================
-async function buscarResultados() {
-  for (let fonte of fontes) {
+// ================= BUSCAR POR BANCA =================
+async function buscarBanca(lista) {
+  for (let url of lista) {
     try {
-      const res = await axios.get(fonte.url, { timeout: 8000 });
+      const res = await axios.get(url, { timeout: 8000 });
 
-      if (dadosValidos(res.data)) {
-        console.log("✅ Fonte OK:", fonte.nome);
-
-        return {
-          fonte: fonte.nome,
-          atualizado: new Date().toLocaleString(),
-          ...res.data
-        };
+      if (Array.isArray(res.data) && res.data.length > 0) {
+        console.log("✅ OK:", url);
+        return res.data;
       }
 
-      console.log("⚠️ Fonte sem dados:", fonte.nome);
+      if (res.data && typeof res.data === "object") {
+        return res.data;
+      }
 
-    } catch (e) {
-      console.log("❌ Falha:", fonte.nome);
+    } catch {
+      console.log("❌ erro:", url);
     }
   }
-
-  // fallback
-  return {
-    fonte: "offline",
-    atualizado: new Date().toLocaleString(),
-    rio: [],
-    look: [],
-    nacional: [],
-    federal: []
-  };
+  return [];
 }
 
-// ================= ROTA =================
+// ================= BUSCAR GERAL =================
+async function buscarGeral() {
+  for (let url of FONTES.geral) {
+    try {
+      const res = await axios.get(url, { timeout: 8000 });
+
+      if (res.data && Object.keys(res.data).length > 0) {
+        return res.data;
+      }
+
+    } catch {}
+  }
+  return null;
+}
+
+// ================= CACHE =================
+let cache = null;
+let tempo = 0;
+
+async function carregarTudo() {
+  const agora = Date.now();
+
+  if (cache && agora - tempo < 60000) {
+    console.log("⚡ cache");
+    return cache;
+  }
+
+  console.log("🔄 atualizando...");
+
+  const [rio, look, federal, geral] = await Promise.all([
+    buscarBanca(FONTES.rio),
+    buscarBanca(FONTES.look),
+    buscarBanca(FONTES.federal),
+    buscarGeral()
+  ]);
+
+  const resultado = {
+    atualizado: new Date().toLocaleString(),
+    fonte: "multi-fontes",
+
+    rio: valido(rio) ? rio : (geral?.rio || []),
+    look: valido(look) ? look : (geral?.look || []),
+    federal: valido(federal) ? federal : (geral?.federal || []),
+    nacional: geral?.nacional || []
+  };
+
+  cache = resultado;
+  tempo = agora;
+
+  return resultado;
+}
+
+// ================= ROTAS =================
 app.get("/resultados", async (req, res) => {
-  const dados = await buscarResultados();
+  const dados = await carregarTudo();
   res.json(dados);
 });
 
-// ================= STATUS =================
 app.get("/", (req, res) => {
   res.json({
     status: "ok",
-    mensagem: "API rodando 🚀",
-    endpoint: "/resultados"
+    msg: "API multi-bancas rodando 🚀",
+    rota: "/resultados"
   });
 });
 
 // ================= START =================
 app.listen(PORT, () => {
-  console.log("🚀 Rodando na porta", PORT);
+  console.log("🚀 Porta", PORT);
 });
