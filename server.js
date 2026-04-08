@@ -1,109 +1,119 @@
 import express from "express";
 import axios from "axios";
 import cors from "cors";
+import cheerio from "cheerio";
 
 const app = express();
 app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
-// ================= FONTES POR BANCA =================
-const FONTES = {
-  rio: [
-    "https://bicho-api.onrender.com/rio",
-    "https://api.allorigins.win/raw?url=https://bicho-api.onrender.com/rio"
-  ],
-  look: [
-    "https://bicho-api.onrender.com/look",
-    "https://api.allorigins.win/raw?url=https://bicho-api.onrender.com/look"
-  ],
-  federal: [
-    "https://bicho-api.onrender.com/federal",
-    "https://api.allorigins.win/raw?url=https://bicho-api.onrender.com/federal"
-  ],
-  geral: [
-    "https://bicho-api.onrender.com",
-    "https://api.allorigins.win/raw?url=https://bicho-api.onrender.com"
-  ]
-};
-
-// ================= VALIDAR =================
-function valido(arr) {
-  return Array.isArray(arr) && arr.length > 0;
-}
-
-// ================= BUSCAR POR BANCA =================
-async function buscarBanca(lista) {
-  for (let url of lista) {
-    try {
-      const res = await axios.get(url, { timeout: 8000 });
-
-      if (Array.isArray(res.data) && res.data.length > 0) {
-        console.log("✅ OK:", url);
-        return res.data;
-      }
-
-      if (res.data && typeof res.data === "object") {
-        return res.data;
-      }
-
-    } catch {
-      console.log("❌ erro:", url);
-    }
-  }
-  return [];
-}
-
-// ================= BUSCAR GERAL =================
-async function buscarGeral() {
-  for (let url of FONTES.geral) {
-    try {
-      const res = await axios.get(url, { timeout: 8000 });
-
-      if (res.data && Object.keys(res.data).length > 0) {
-        return res.data;
-      }
-
-    } catch {}
-  }
-  return null;
-}
-
 // ================= CACHE =================
 let cache = null;
 let tempo = 0;
 
+// ================= RIO =================
+async function pegarRio() {
+  try {
+    const { data } = await axios.get("https://www.deunoposte.com/", {
+      timeout: 10000
+    });
+
+    const $ = cheerio.load(data);
+    let resultados = [];
+
+    $("table tr").each((i, el) => {
+      const cols = $(el).find("td");
+
+      if (cols.length >= 2) {
+        resultados.push({
+          posicao: $(cols[0]).text().trim(),
+          numero: $(cols[1]).text().trim()
+        });
+      }
+    });
+
+    return resultados;
+
+  } catch (e) {
+    console.log("Erro Rio:", e.message);
+    return [];
+  }
+}
+
+// ================= LOOK GO =================
+async function pegarLook() {
+  try {
+    const { data } = await axios.get("https://lookgoias.com/", {
+      timeout: 10000
+    });
+
+    const $ = cheerio.load(data);
+    let resultados = [];
+
+    $("table tr").each((i, el) => {
+      const cols = $(el).find("td");
+
+      if (cols.length >= 2) {
+        resultados.push({
+          posicao: $(cols[0]).text().trim(),
+          numero: $(cols[1]).text().trim()
+        });
+      }
+    });
+
+    return resultados;
+
+  } catch (e) {
+    console.log("Erro Look:", e.message);
+    return [];
+  }
+}
+
+// ================= FEDERAL =================
+async function pegarFederal() {
+  try {
+    const { data } = await axios.get(
+      "https://servicebus2.caixa.gov.br/portaldeloterias/api/federal",
+      { timeout: 10000 }
+    );
+
+    return data;
+
+  } catch (e) {
+    console.log("Erro Federal:", e.message);
+    return [];
+  }
+}
+
+// ================= CARREGAR TUDO =================
 async function carregarTudo() {
   const agora = Date.now();
 
+  // cache 60s
   if (cache && agora - tempo < 60000) {
-    console.log("⚡ cache");
+    console.log("⚡ usando cache");
     return cache;
   }
 
-  console.log("🔄 atualizando...");
+  console.log("🔄 atualizando dados...");
 
-  const [rio, look, federal, geral] = await Promise.all([
-    buscarBanca(FONTES.rio),
-    buscarBanca(FONTES.look),
-    buscarBanca(FONTES.federal),
-    buscarGeral()
+  const [rio, look, federal] = await Promise.all([
+    pegarRio(),
+    pegarLook(),
+    pegarFederal()
   ]);
 
-  const resultado = {
+  cache = {
     atualizado: new Date().toLocaleString(),
-    fonte: "multi-fontes",
-
-    rio: valido(rio) ? rio : (geral?.rio || []),
-    look: valido(look) ? look : (geral?.look || []),
-    federal: valido(federal) ? federal : (geral?.federal || []),
-    nacional: geral?.nacional || []
+    rio,
+    look,
+    federal
   };
 
-  cache = resultado;
   tempo = agora;
 
-  return resultado;
+  return cache;
 }
 
 // ================= ROTAS =================
@@ -115,12 +125,12 @@ app.get("/resultados", async (req, res) => {
 app.get("/", (req, res) => {
   res.json({
     status: "ok",
-    msg: "API multi-bancas rodando 🚀",
+    msg: "API REAL rodando 🚀",
     rota: "/resultados"
   });
 });
 
 // ================= START =================
 app.listen(PORT, () => {
-  console.log("🚀 Porta", PORT);
+  console.log("🚀 Rodando na porta", PORT);
 });
