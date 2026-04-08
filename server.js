@@ -1,7 +1,6 @@
 import express from "express";
 import axios from "axios";
 import cors from "cors";
-import * as cheerio from "cheerio";
 
 const app = express();
 app.use(cors());
@@ -12,103 +11,100 @@ const PORT = process.env.PORT || 3000;
 let cache = null;
 let tempo = 0;
 
-// ================= RIO =================
-async function pegarRio() {
-  try {
-    const { data } = await axios.get("https://www.deunoposte.com/", {
-      timeout: 10000
-    });
+// ================= PARSER =================
+function organizarResultados(lista) {
+  if (!Array.isArray(lista)) return [];
 
-    const $ = cheerio.load(data);
-    let resultados = [];
-
-    $("table tr").each((i, el) => {
-      const cols = $(el).find("td");
-
-      if (cols.length >= 2) {
-        resultados.push({
-          posicao: $(cols[0]).text().trim(),
-          numero: $(cols[1]).text().trim()
-        });
-      }
-    });
-
-    return resultados;
-
-  } catch (e) {
-    console.log("Erro Rio:", e.message);
-    return [];
-  }
+  return lista.map(item => ({
+    horario: item.horario || item.nome || "N/D",
+    p1: item.p1 || item["1"] || "-",
+    p2: item.p2 || item["2"] || "-",
+    p3: item.p3 || item["3"] || "-",
+    p4: item.p4 || item["4"] || "-",
+    p5: item.p5 || item["5"] || "-"
+  }));
 }
 
-// ================= LOOK GO =================
-async function pegarLook() {
+// ================= FONTE PRINCIPAL =================
+async function fontePrincipal() {
   try {
-    const { data } = await axios.get("https://lookgoias.com/", {
-      timeout: 10000
+    const { data } = await axios.get("https://bicho-api.onrender.com", {
+      timeout: 8000,
+      headers: { "User-Agent": "Mozilla/5.0" }
     });
-
-    const $ = cheerio.load(data);
-    let resultados = [];
-
-    $("table tr").each((i, el) => {
-      const cols = $(el).find("td");
-
-      if (cols.length >= 2) {
-        resultados.push({
-          posicao: $(cols[0]).text().trim(),
-          numero: $(cols[1]).text().trim()
-        });
-      }
-    });
-
-    return resultados;
-
-  } catch (e) {
-    console.log("Erro Look:", e.message);
-    return [];
-  }
-}
-
-// ================= FEDERAL =================
-async function pegarFederal() {
-  try {
-    const { data } = await axios.get(
-      "https://servicebus2.caixa.gov.br/portaldeloterias/api/federal",
-      { timeout: 10000 }
-    );
 
     return data;
 
-  } catch (e) {
-    console.log("Erro Federal:", e.message);
+  } catch {
+    return null;
+  }
+}
+
+// ================= SCRAPER FALLBACK =================
+async function fallbackSimples(url) {
+  try {
+    const { data } = await axios.get(url, {
+      headers: { "User-Agent": "Mozilla/5.0" }
+    });
+
+    // extrai números tipo 1234
+    const numeros = data.match(/\d{4}/g) || [];
+
+    let resultados = [];
+
+    for (let i = 0; i < numeros.length; i += 5) {
+      resultados.push({
+        horario: "extração",
+        p1: numeros[i],
+        p2: numeros[i + 1],
+        p3: numeros[i + 2],
+        p4: numeros[i + 3],
+        p5: numeros[i + 4]
+      });
+    }
+
+    return resultados;
+
+  } catch {
     return [];
   }
 }
 
-// ================= CARREGAR TUDO =================
+// ================= CARREGAR =================
 async function carregarTudo() {
   const agora = Date.now();
 
-  // cache 60s
   if (cache && agora - tempo < 60000) {
-    console.log("⚡ usando cache");
+    console.log("⚡ cache");
     return cache;
   }
 
-  console.log("🔄 atualizando dados...");
+  console.log("🔄 atualizando...");
 
-  const [rio, look, federal] = await Promise.all([
-    pegarRio(),
-    pegarLook(),
-    pegarFederal()
-  ]);
+  const base = await fontePrincipal();
+
+  let rio = organizarResultados(base?.rio || []);
+  let look = organizarResultados(base?.look || []);
+  let federal = organizarResultados(base?.federal || []);
+  let nacional = organizarResultados(base?.nacional || []);
+
+  // fallback se vazio
+  if (rio.length === 0) {
+    console.log("⚠️ fallback RIO");
+    rio = await fallbackSimples("https://www.deunoposte.com/");
+  }
+
+  if (look.length === 0) {
+    console.log("⚠️ fallback LOOK");
+    look = await fallbackSimples("https://lookgoias.com/");
+  }
 
   cache = {
     atualizado: new Date().toLocaleString(),
     rio,
     look,
-    federal
+    federal,
+    nacional
   };
 
   tempo = agora;
@@ -125,7 +121,7 @@ app.get("/resultados", async (req, res) => {
 app.get("/", (req, res) => {
   res.json({
     status: "ok",
-    msg: "API REAL rodando 🚀",
+    msg: "API PROFISSIONAL rodando 🚀",
     rota: "/resultados"
   });
 });
