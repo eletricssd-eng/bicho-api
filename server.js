@@ -2,17 +2,21 @@ import express from "express";
 import axios from "axios";
 import cors from "cors";
 import * as cheerio from "cheerio";
+import fs from "fs";
 
 const app = express();
 app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
+// ================= ARQUIVO =================
+const HISTORICO_FILE = "./historico.json";
+
 // ================= CACHE =================
 let cache = null;
 let tempo = 0;
 
-// ================= SCRAPER PADRÃO =================
+// ================= SCRAPER =================
 async function scraperBanca(url) {
   try {
     const { data } = await axios.get(url, {
@@ -51,37 +55,18 @@ async function scraperBanca(url) {
 
     return resultados;
 
-  } catch (e) {
-    console.log("Erro scraping:", url);
+  } catch {
     return [];
   }
 }
 
 // ================= BANCAS =================
 async function pegarBancas() {
-
-  const resultado = {
-    rio: [],
-    look: [],
-    nacional: []
+  return {
+    rio: await scraperBanca("https://www.resultadofacil.com.br/resultado-do-jogo-do-bicho-rio"),
+    look: await scraperBanca("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
+    nacional: await scraperBanca("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje")
   };
-
-  // LOOK
-  resultado.look = await scraperBanca(
-    "https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"
-  );
-
-  // NACIONAL
-  resultado.nacional = await scraperBanca(
-    "https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje"
-  );
-
-  // RIO (CORRIGIDO)
-  resultado.rio = await scraperBanca(
-    "https://www.resultadofacil.com.br/resultado-do-jogo-do-bicho-rio"
-  );
-
-  return resultado;
 }
 
 // ================= FEDERAL =================
@@ -97,11 +82,7 @@ async function pegarFederal() {
       }
     );
 
-    const dados = res.data;
-
-    if (!dados || !dados.listaSorteios) return [];
-
-    const sorteio = dados.listaSorteios[0];
+    const sorteio = res.data.listaSorteios?.[0];
 
     if (!sorteio || !sorteio.dezenas) return [];
 
@@ -115,30 +96,82 @@ async function pegarFederal() {
       p5: sorteio.dezenas[4]
     }];
 
-  } catch (e) {
-    console.log("Erro Federal:", e.message);
+  } catch {
     return [];
   }
+}
+
+// ================= HISTÓRICO =================
+function salvarHistorico(dadosHoje) {
+  let historico = {};
+
+  if (fs.existsSync(HISTORICO_FILE)) {
+    historico = JSON.parse(fs.readFileSync(HISTORICO_FILE));
+  }
+
+  const hoje = new Date().toISOString().split("T")[0];
+  historico[hoje] = dadosHoje;
+
+  const datas = Object.keys(historico).sort().reverse().slice(0, 7);
+
+  const novo = {};
+  datas.forEach(d => novo[d] = historico[d]);
+
+  fs.writeFileSync(HISTORICO_FILE, JSON.stringify(novo, null, 2));
+}
+
+function lerHistorico() {
+  if (!fs.existsSync(HISTORICO_FILE)) return {};
+  return JSON.parse(fs.readFileSync(HISTORICO_FILE));
+}
+
+// ================= ANÁLISE =================
+function analisar(historico) {
+  const contagem = {};
+
+  Object.values(historico).forEach(dia => {
+    ["rio", "look", "nacional"].forEach(banca => {
+      (dia[banca] || []).forEach(res => {
+        [res.p1, res.p2, res.p3, res.p4, res.p5].forEach(num => {
+          if (!contagem[num]) contagem[num] = 0;
+          contagem[num]++;
+        });
+      });
+    });
+  });
+
+  const maisFrequentes = Object.entries(contagem)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10);
+
+  return {
+    maisFrequentes
+  };
 }
 
 // ================= PRINCIPAL =================
 async function carregarTudo() {
   const agora = Date.now();
 
-  if (cache && agora - tempo < 60000) {
-    console.log("⚡ cache");
-    return cache;
-  }
-
-  console.log("🔄 atualizando...");
+  if (cache && agora - tempo < 60000) return cache;
 
   const bancas = await pegarBancas();
   const federal = await pegarFederal();
 
-  cache = {
-    atualizado: new Date().toLocaleString(),
+  const dadosHoje = {
     ...bancas,
     federal
+  };
+
+  salvarHistorico(dadosHoje);
+
+  const historico = lerHistorico();
+  const analise = analisar(historico);
+
+  cache = {
+    atualizado: new Date().toLocaleString(),
+    historico,
+    analise
   };
 
   tempo = agora;
@@ -152,14 +185,6 @@ app.get("/resultados", async (req, res) => {
   res.json(dados);
 });
 
-app.get("/", (req, res) => {
-  res.json({
-    status: "ok",
-    rota: "/resultados"
-  });
-});
-
-// ================= START =================
 app.listen(PORT, () => {
   console.log("🚀 Rodando na porta", PORT);
 });
