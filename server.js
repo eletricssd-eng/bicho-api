@@ -130,13 +130,18 @@ async function pegarYouTube() {
 
   for (let v of videos) {
     const titulo = v.snippet.title;
+    const descricao = v.snippet.description || "";
 
     console.log("🔎 título:", titulo);
+    console.log("📝 descrição:", descricao);
 
-    const resultado = extrairResultados(titulo);
+    // junta título + descrição
+    const texto = titulo + " " + descricao;
+
+    const resultado = extrairResultados(texto);
 
     if (resultado) {
-      console.log("✅ YouTube OK:", titulo);
+      console.log("✅ YouTube OK:", texto);
       return [resultado];
     }
   }
