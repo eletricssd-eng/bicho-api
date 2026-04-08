@@ -12,24 +12,6 @@ const PORT = process.env.PORT || 3000;
 let cache = null;
 let tempo = 0;
 
-// ================= DATAS =================
-function gerarDatas(qtd = 7) {
-  const datas = [];
-
-  for (let i = 0; i < qtd; i++) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-
-    const dia = String(d.getDate()).padStart(2, "0");
-    const mes = String(d.getMonth() + 1).padStart(2, "0");
-    const ano = d.getFullYear();
-
-    datas.push(`${ano}-${mes}-${dia}`);
-  }
-
-  return datas;
-}
-
 // ================= SCRAPER PADRÃO =================
 async function scraperBanca(url) {
   try {
@@ -70,39 +52,34 @@ async function scraperBanca(url) {
     return resultados;
 
   } catch (e) {
-    console.log("Erro:", url);
+    console.log("Erro scraping:", url);
     return [];
   }
 }
 
 // ================= BANCAS =================
 async function pegarBancas() {
-  const datas = gerarDatas(7);
 
   const resultado = {
-    rio: {},
-    look: {},
-    nacional: {}
+    rio: [],
+    look: [],
+    nacional: []
   };
 
-  for (let data of datas) {
+  // LOOK
+  resultado.look = await scraperBanca(
+    "https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"
+  );
 
-    // URLs com data
-    const urls = {
-      rio: `https://www.resultadofacil.com.br/resultado-do-jogo-do-bicho-rio/${data}`,
-      look: `https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje`,
-      nacional: `https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje`
-    };
+  // NACIONAL
+  resultado.nacional = await scraperBanca(
+    "https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje"
+  );
 
-    // RIO (com data)
-    resultado.rio[data] = await scraperBanca(urls.rio);
-
-    // LOOK (site não usa data na URL, então repete)
-    resultado.look[data] = await scraperBanca(urls.look);
-
-    // NACIONAL (mesma coisa)
-    resultado.nacional[data] = await scraperBanca(urls.nacional);
-  }
+  // RIO (CORRIGIDO)
+  resultado.rio = await scraperBanca(
+    "https://www.resultadofacil.com.br/resultado-do-jogo-do-bicho-rio"
+  );
 
   return resultado;
 }
@@ -110,12 +87,21 @@ async function pegarBancas() {
 // ================= FEDERAL =================
 async function pegarFederal() {
   try {
-    const { data } = await axios.get(
+    const res = await axios.get(
       "https://servicebus2.caixa.gov.br/portaldeloterias/api/federal",
-      { headers: { "User-Agent": "Mozilla/5.0" } }
+      {
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+          "Accept": "application/json"
+        }
+      }
     );
 
-    const sorteio = data.listaSorteios?.[0];
+    const dados = res.data;
+
+    if (!dados || !dados.listaSorteios) return [];
+
+    const sorteio = dados.listaSorteios[0];
 
     if (!sorteio || !sorteio.dezenas) return [];
 
@@ -129,7 +115,8 @@ async function pegarFederal() {
       p5: sorteio.dezenas[4]
     }];
 
-  } catch {
+  } catch (e) {
+    console.log("Erro Federal:", e.message);
     return [];
   }
 }
@@ -138,9 +125,12 @@ async function pegarFederal() {
 async function carregarTudo() {
   const agora = Date.now();
 
-  if (cache && agora - tempo < 60000) return cache;
+  if (cache && agora - tempo < 60000) {
+    console.log("⚡ cache");
+    return cache;
+  }
 
-  console.log("🔄 Atualizando...");
+  console.log("🔄 atualizando...");
 
   const bancas = await pegarBancas();
   const federal = await pegarFederal();
@@ -162,6 +152,14 @@ app.get("/resultados", async (req, res) => {
   res.json(dados);
 });
 
+app.get("/", (req, res) => {
+  res.json({
+    status: "ok",
+    rota: "/resultados"
+  });
+});
+
+// ================= START =================
 app.listen(PORT, () => {
   console.log("🚀 Rodando na porta", PORT);
 });
