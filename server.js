@@ -192,46 +192,110 @@ function lerHistorico() {
 }
 
 // ================= ANÁLISE =================
+function extrairHorario(texto) {
+  if (!texto) return "outros";
+
+  const t = texto.toLowerCase();
+
+  if (t.includes("ptm")) return "PTM";
+  if (t.includes("ptv")) return "PTV";
+  if (t.includes("pt")) return "PT";
+
+  const hora = texto.match(/\d{2}:\d{2}|\d{2}h/);
+  if (hora) return hora[0];
+
+  return "outros";
+}
+
 function analisar(historico) {
-  const finais = {};
-  const gruposCont = {};
-  const ultimos = [];
+  const porBanca = {};
+  const porHorario = {};
+  const gruposBanca = {};
+  const gruposHorario = {};
 
   Object.values(historico).forEach(dia => {
+
     ["rio", "look", "nacional"].forEach(banca => {
 
       (dia[banca] || []).forEach(res => {
+
+        const horario = extrairHorario(res.horario);
+
+        // ===== INIT =====
+        if (!porBanca[banca]) porBanca[banca] = {};
+        if (!porBanca[banca][horario]) porBanca[banca][horario] = {};
+
+        if (!porHorario[horario]) porHorario[horario] = {};
+
+        if (!gruposBanca[banca]) gruposBanca[banca] = {};
+        if (!gruposBanca[banca][horario]) gruposBanca[banca][horario] = {};
+
+        if (!gruposHorario[horario]) gruposHorario[horario] = {};
+
+        // ===== LOOP DEZENAS =====
         [res.p1, res.p2, res.p3, res.p4, res.p5].forEach(num => {
 
           if (!num) return;
 
           const final = num.slice(-2);
 
-          finais[final] = (finais[final] || 0) + 1;
+          // ===== POR BANCA =====
+          porBanca[banca][horario][final] =
+            (porBanca[banca][horario][final] || 0) + 1;
 
+          // ===== POR HORARIO =====
+          porHorario[horario][final] =
+            (porHorario[horario][final] || 0) + 1;
+
+          // ===== GRUPOS =====
           const grupo = getGrupo(num);
+
           if (grupo) {
-            gruposCont[grupo] = (gruposCont[grupo] || 0) + 1;
+            gruposBanca[banca][horario][grupo] =
+              (gruposBanca[banca][horario][grupo] || 0) + 1;
+
+            gruposHorario[horario][grupo] =
+              (gruposHorario[horario][grupo] || 0) + 1;
           }
 
-          ultimos.push(final);
         });
+
       });
 
     });
+
   });
 
-  const topFinais = Object.entries(finais)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 10);
+  // ================= TOP HELPERS =================
+  const top = obj =>
+    Object.entries(obj)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
 
-  const topGrupos = Object.entries(gruposCont)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 10);
+  // ================= FORMATAR =================
+  const resumoBanca = {};
+  Object.keys(porBanca).forEach(banca => {
+    resumoBanca[banca] = {};
+
+    Object.keys(porBanca[banca]).forEach(h => {
+      resumoBanca[banca][h] = {
+        topDezenas: top(porBanca[banca][h]),
+        topGrupos: top(gruposBanca[banca][h])
+      };
+    });
+  });
+
+  const resumoHorario = {};
+  Object.keys(porHorario).forEach(h => {
+    resumoHorario[h] = {
+      topDezenas: top(porHorario[h]),
+      topGrupos: top(gruposHorario[h])
+    };
+  });
 
   return {
-    topFinais,
-    topGrupos
+    porBanca: resumoBanca,
+    porHorario: resumoHorario
   };
 }
 
