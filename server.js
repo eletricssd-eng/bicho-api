@@ -82,22 +82,54 @@ async function pegarBancas() {
 
 // ================= FEDERAL =================
 async function pegarFederal() {
-
-  // ===== 1ª tentativa: site resultado fácil =====
   try {
-    const dados = await scraperBanca(
-      "https://www.resultadofacil.com.br/resultado-banca-federal"
+    const { data } = await axios.get(
+      "https://www.resultadofacil.com.br/resultado-banca-federal",
+      { headers: { "User-Agent": "Mozilla/5.0" } }
     );
 
-    if (dados.length > 0) {
-      return dados.map(d => ({
-        ...d,
-        horario: "Federal (Site)"
-      }));
-    }
-  } catch {}
+    const $ = cheerio.load(data);
 
-  // ===== 2ª tentativa: API Caixa =====
+    let resultado = null;
+
+    $("h2, h3").each((i, el) => {
+      const titulo = $(el).text().trim();
+
+      // só pega bloco da federal
+      if (!titulo.toLowerCase().includes("federal")) return;
+
+      const tabela = $(el).nextAll("table").first();
+      if (!tabela.length) return;
+
+      const nums = [];
+
+      tabela.find("tr").each((i, tr) => {
+        const texto = $(tr).text();
+        const match = texto.match(/\d{4}/);
+
+        if (match) nums.push(match[0]);
+      });
+
+      if (nums.length >= 5 && !resultado) {
+        resultado = {
+          horario: titulo,
+          p1: nums[0],
+          p2: nums[1],
+          p3: nums[2],
+          p4: nums[3],
+          p5: nums[4]
+        };
+      }
+    });
+
+    // ✅ se achou no site, retorna só 1
+    if (resultado) return [resultado];
+
+  } catch (e) {
+    console.log("Erro Federal site:", e.message);
+  }
+
+  // ================= FALLBACK API =================
   try {
     const res = await axios.get(
       "https://servicebus2.caixa.gov.br/portaldeloterias/api/federal",
@@ -114,8 +146,7 @@ async function pegarFederal() {
     if (!sorteio || !sorteio.dezenas) return [];
 
     return [{
-      horario: "Federal (API)",
-      data: sorteio.dataApuracao,
+      horario: `Federal ${sorteio.dataApuracao}`,
       p1: sorteio.dezenas[0],
       p2: sorteio.dezenas[1],
       p3: sorteio.dezenas[2],
@@ -124,7 +155,7 @@ async function pegarFederal() {
     }];
 
   } catch (e) {
-    console.log("Erro Federal:", e.message);
+    console.log("Erro Federal API:", e.message);
     return [];
   }
 }
