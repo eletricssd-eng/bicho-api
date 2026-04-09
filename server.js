@@ -46,6 +46,7 @@ const grupos = [
 ];
 
 function getGrupo(dezena) {
+  if (!dezena) return null;
   const final = dezena.slice(-2);
   for (let [nome, lista] of grupos) {
     if (lista.includes(final)) return nome;
@@ -65,6 +66,7 @@ async function scraperBanca(url) {
 
     $("h2, h3").each((i, el) => {
       const titulo = $(el).text().trim();
+
       const tabela = $(el).nextAll("table").first();
       if (!tabela.length) return;
 
@@ -90,7 +92,8 @@ async function scraperBanca(url) {
 
     return resultados;
 
-  } catch {
+  } catch (e) {
+    console.log("Erro scraper:", url);
     return [];
   }
 }
@@ -145,7 +148,9 @@ async function pegarFederal() {
 
     if (resultado) return [resultado];
 
-  } catch {}
+  } catch (e) {
+    console.log("Erro Federal:", e.message);
+  }
 
   return [];
 }
@@ -154,8 +159,12 @@ async function pegarFederal() {
 function salvarHistorico(dadosHoje) {
   let historico = {};
 
-  if (fs.existsSync(HISTORICO_FILE)) {
-    historico = JSON.parse(fs.readFileSync(HISTORICO_FILE));
+  try {
+    if (fs.existsSync(HISTORICO_FILE)) {
+      historico = JSON.parse(fs.readFileSync(HISTORICO_FILE, "utf-8"));
+    }
+  } catch {
+    historico = {};
   }
 
   const hoje = new Date().toISOString().split("T")[0];
@@ -173,54 +182,45 @@ function salvarHistorico(dadosHoje) {
 }
 
 function lerHistorico() {
-  if (!fs.existsSync(HISTORICO_FILE)) return {};
-  return JSON.parse(fs.readFileSync(HISTORICO_FILE));
+  try {
+    if (!fs.existsSync(HISTORICO_FILE)) return {};
+    return JSON.parse(fs.readFileSync(HISTORICO_FILE, "utf-8"));
+  } catch (e) {
+    console.log("Erro ao ler histórico:", e.message);
+    return {};
+  }
 }
 
 // ================= ANÁLISE =================
 function analisar(historico) {
   const finais = {};
   const gruposCont = {};
-  const atrasados = {};
-
-  const ultimosResultados = [];
+  const ultimos = [];
 
   Object.values(historico).forEach(dia => {
     ["rio", "look", "nacional"].forEach(banca => {
 
       (dia[banca] || []).forEach(res => {
-
         [res.p1, res.p2, res.p3, res.p4, res.p5].forEach(num => {
+
+          if (!num) return;
 
           const final = num.slice(-2);
 
-          // ===== FINAIS =====
           finais[final] = (finais[final] || 0) + 1;
 
-          // ===== GRUPOS =====
           const grupo = getGrupo(num);
           if (grupo) {
             gruposCont[grupo] = (gruposCont[grupo] || 0) + 1;
           }
 
-          ultimosResultados.push(final);
+          ultimos.push(final);
         });
-
       });
 
     });
   });
 
-  // ================= ATRASADOS =================
-  for (let i = 0; i < 100; i++) {
-    const dez = String(i).padStart(2, "0");
-
-    if (!ultimosResultados.includes(dez)) {
-      atrasados[dez] = true;
-    }
-  }
-
-  // ================= TOP =================
   const topFinais = Object.entries(finais)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10);
@@ -229,12 +229,9 @@ function analisar(historico) {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10);
 
-  const listaAtrasados = Object.keys(atrasados).slice(0, 10);
-
   return {
     topFinais,
-    topGrupos,
-    atrasados: listaAtrasados
+    topGrupos
   };
 }
 
