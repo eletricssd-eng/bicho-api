@@ -179,53 +179,62 @@ function lerHistorico() {
 
 // ================= ANÁLISE =================
 function analisar(historico) {
-  const dezenas = {};
+  const finais = {};
   const gruposCont = {};
-  const porBanca = {};
-  const porHorario = {};
+  const atrasados = {};
+
+  const ultimosResultados = [];
 
   Object.values(historico).forEach(dia => {
     ["rio", "look", "nacional"].forEach(banca => {
 
       (dia[banca] || []).forEach(res => {
-        const horario = res.horario || "outros";
-
-        if (!porBanca[banca]) porBanca[banca] = {};
-        if (!porBanca[banca][horario]) porBanca[banca][horario] = {};
-
-        if (!porHorario[horario]) porHorario[horario] = {};
 
         [res.p1, res.p2, res.p3, res.p4, res.p5].forEach(num => {
 
-          dezenas[num] = (dezenas[num] || 0) + 1;
+          const final = num.slice(-2);
 
-          porBanca[banca][horario][num] =
-            (porBanca[banca][horario][num] || 0) + 1;
+          // ===== FINAIS =====
+          finais[final] = (finais[final] || 0) + 1;
 
-          porHorario[horario][num] =
-            (porHorario[horario][num] || 0) + 1;
-
+          // ===== GRUPOS =====
           const grupo = getGrupo(num);
           if (grupo) {
             gruposCont[grupo] = (gruposCont[grupo] || 0) + 1;
           }
+
+          ultimosResultados.push(final);
         });
+
       });
 
     });
   });
 
+  // ================= ATRASADOS =================
+  for (let i = 0; i < 100; i++) {
+    const dez = String(i).padStart(2, "0");
+
+    if (!ultimosResultados.includes(dez)) {
+      atrasados[dez] = true;
+    }
+  }
+
+  // ================= TOP =================
+  const topFinais = Object.entries(finais)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10);
+
+  const topGrupos = Object.entries(gruposCont)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10);
+
+  const listaAtrasados = Object.keys(atrasados).slice(0, 10);
+
   return {
-    topDezenas: Object.entries(dezenas)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10),
-
-    topGrupos: Object.entries(gruposCont)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10),
-
-    porBanca,
-    porHorario
+    topFinais,
+    topGrupos,
+    atrasados: listaAtrasados
   };
 }
 
