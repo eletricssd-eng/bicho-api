@@ -16,6 +16,43 @@ const HISTORICO_FILE = "./historico.json";
 let cache = null;
 let tempo = 0;
 
+// ================= GRUPOS =================
+const grupos = [
+  ["Avestruz", ["01","02","03","04"]],
+  ["Águia", ["05","06","07","08"]],
+  ["Burro", ["09","10","11","12"]],
+  ["Borboleta", ["13","14","15","16"]],
+  ["Cachorro", ["17","18","19","20"]],
+  ["Cabra", ["21","22","23","24"]],
+  ["Carneiro", ["25","26","27","28"]],
+  ["Camelo", ["29","30","31","32"]],
+  ["Cobra", ["33","34","35","36"]],
+  ["Coelho", ["37","38","39","40"]],
+  ["Cavalo", ["41","42","43","44"]],
+  ["Elefante", ["45","46","47","48"]],
+  ["Galo", ["49","50","51","52"]],
+  ["Gato", ["53","54","55","56"]],
+  ["Jacaré", ["57","58","59","60"]],
+  ["Leão", ["61","62","63","64"]],
+  ["Macaco", ["65","66","67","68"]],
+  ["Porco", ["69","70","71","72"]],
+  ["Pavão", ["73","74","75","76"]],
+  ["Peru", ["77","78","79","80"]],
+  ["Touro", ["81","82","83","84"]],
+  ["Tigre", ["85","86","87","88"]],
+  ["Urso", ["89","90","91","92"]],
+  ["Veado", ["93","94","95","96"]],
+  ["Vaca", ["97","98","99","00"]],
+];
+
+function getGrupo(dezena) {
+  const final = dezena.slice(-2);
+  for (let [nome, lista] of grupos) {
+    if (lista.includes(final)) return nome;
+  }
+  return null;
+}
+
 // ================= SCRAPER =================
 async function scraperBanca(url) {
   try {
@@ -28,7 +65,6 @@ async function scraperBanca(url) {
 
     $("h2, h3").each((i, el) => {
       const titulo = $(el).text().trim();
-
       const tabela = $(el).nextAll("table").first();
       if (!tabela.length) return;
 
@@ -37,7 +73,6 @@ async function scraperBanca(url) {
       tabela.find("tr").each((i, tr) => {
         const texto = $(tr).text();
         const match = texto.match(/\d{4}/);
-
         if (match) nums.push(match[0]);
       });
 
@@ -63,20 +98,9 @@ async function scraperBanca(url) {
 // ================= BANCAS =================
 async function pegarBancas() {
   return {
-    // 🟥 RIO (NOVO LINK)
-    rio: await scraperBanca(
-      "https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"
-    ),
-
-    // 🟢 LOOK
-    look: await scraperBanca(
-      "https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"
-    ),
-
-    // 🟡 NACIONAL
-    nacional: await scraperBanca(
-      "https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje"
-    )
+    rio: await scraperBanca("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
+    look: await scraperBanca("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
+    nacional: await scraperBanca("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje")
   };
 }
 
@@ -89,13 +113,11 @@ async function pegarFederal() {
     );
 
     const $ = cheerio.load(data);
-
     let resultado = null;
 
     $("h2, h3").each((i, el) => {
       const titulo = $(el).text().trim();
 
-      // só pega bloco da federal
       if (!titulo.toLowerCase().includes("federal")) return;
 
       const tabela = $(el).nextAll("table").first();
@@ -106,7 +128,6 @@ async function pegarFederal() {
       tabela.find("tr").each((i, tr) => {
         const texto = $(tr).text();
         const match = texto.match(/\d{4}/);
-
         if (match) nums.push(match[0]);
       });
 
@@ -122,42 +143,11 @@ async function pegarFederal() {
       }
     });
 
-    // ✅ se achou no site, retorna só 1
     if (resultado) return [resultado];
 
-  } catch (e) {
-    console.log("Erro Federal site:", e.message);
-  }
+  } catch {}
 
-  // ================= FALLBACK API =================
-  try {
-    const res = await axios.get(
-      "https://servicebus2.caixa.gov.br/portaldeloterias/api/federal",
-      {
-        headers: {
-          "User-Agent": "Mozilla/5.0",
-          "Accept": "application/json"
-        }
-      }
-    );
-
-    const sorteio = res.data.listaSorteios?.[0];
-
-    if (!sorteio || !sorteio.dezenas) return [];
-
-    return [{
-      horario: `Federal ${sorteio.dataApuracao}`,
-      p1: sorteio.dezenas[0],
-      p2: sorteio.dezenas[1],
-      p3: sorteio.dezenas[2],
-      p4: sorteio.dezenas[3],
-      p5: sorteio.dezenas[4]
-    }];
-
-  } catch (e) {
-    console.log("Erro Federal API:", e.message);
-    return [];
-  }
+  return [];
 }
 
 // ================= HISTÓRICO =================
@@ -171,7 +161,10 @@ function salvarHistorico(dadosHoje) {
   const hoje = new Date().toISOString().split("T")[0];
   historico[hoje] = dadosHoje;
 
-  const datas = Object.keys(historico).sort().reverse().slice(0, 7);
+  const datas = Object.keys(historico)
+    .sort()
+    .reverse()
+    .slice(0, 7);
 
   const novo = {};
   datas.forEach(d => novo[d] = historico[d]);
@@ -186,25 +179,53 @@ function lerHistorico() {
 
 // ================= ANÁLISE =================
 function analisar(historico) {
-  const contagem = {};
+  const dezenas = {};
+  const gruposCont = {};
+  const porBanca = {};
+  const porHorario = {};
 
   Object.values(historico).forEach(dia => {
     ["rio", "look", "nacional"].forEach(banca => {
+
       (dia[banca] || []).forEach(res => {
+        const horario = res.horario || "outros";
+
+        if (!porBanca[banca]) porBanca[banca] = {};
+        if (!porBanca[banca][horario]) porBanca[banca][horario] = {};
+
+        if (!porHorario[horario]) porHorario[horario] = {};
+
         [res.p1, res.p2, res.p3, res.p4, res.p5].forEach(num => {
-          if (!contagem[num]) contagem[num] = 0;
-          contagem[num]++;
+
+          dezenas[num] = (dezenas[num] || 0) + 1;
+
+          porBanca[banca][horario][num] =
+            (porBanca[banca][horario][num] || 0) + 1;
+
+          porHorario[horario][num] =
+            (porHorario[horario][num] || 0) + 1;
+
+          const grupo = getGrupo(num);
+          if (grupo) {
+            gruposCont[grupo] = (gruposCont[grupo] || 0) + 1;
+          }
         });
       });
+
     });
   });
 
-  const maisFrequentes = Object.entries(contagem)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 10);
-
   return {
-    maisFrequentes
+    topDezenas: Object.entries(dezenas)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10),
+
+    topGrupos: Object.entries(gruposCont)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10),
+
+    porBanca,
+    porHorario
   };
 }
 
@@ -213,6 +234,8 @@ async function carregarTudo() {
   const agora = Date.now();
 
   if (cache && agora - tempo < 60000) return cache;
+
+  console.log("🔄 atualizando...");
 
   const bancas = await pegarBancas();
   const federal = await pegarFederal();
