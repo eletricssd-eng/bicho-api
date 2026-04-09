@@ -63,14 +63,41 @@ async function scraperBanca(url) {
 // ================= BANCAS =================
 async function pegarBancas() {
   return {
-    rio: await scraperBanca("https://www.resultadofacil.com.br/resultado-do-jogo-do-bicho-rio"),
-    look: await scraperBanca("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
-    nacional: await scraperBanca("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje")
+    // 🟥 RIO (NOVO LINK)
+    rio: await scraperBanca(
+      "https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"
+    ),
+
+    // 🟢 LOOK
+    look: await scraperBanca(
+      "https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"
+    ),
+
+    // 🟡 NACIONAL
+    nacional: await scraperBanca(
+      "https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje"
+    )
   };
 }
 
 // ================= FEDERAL =================
 async function pegarFederal() {
+
+  // ===== 1ª tentativa: site resultado fácil =====
+  try {
+    const dados = await scraperBanca(
+      "https://www.resultadofacil.com.br/resultado-banca-federal"
+    );
+
+    if (dados.length > 0) {
+      return dados.map(d => ({
+        ...d,
+        horario: "Federal (Site)"
+      }));
+    }
+  } catch {}
+
+  // ===== 2ª tentativa: API Caixa =====
   try {
     const res = await axios.get(
       "https://servicebus2.caixa.gov.br/portaldeloterias/api/federal",
@@ -87,7 +114,7 @@ async function pegarFederal() {
     if (!sorteio || !sorteio.dezenas) return [];
 
     return [{
-      horario: "Federal",
+      horario: "Federal (API)",
       data: sorteio.dataApuracao,
       p1: sorteio.dezenas[0],
       p2: sorteio.dezenas[1],
@@ -96,7 +123,8 @@ async function pegarFederal() {
       p5: sorteio.dezenas[4]
     }];
 
-  } catch {
+  } catch (e) {
+    console.log("Erro Federal:", e.message);
     return [];
   }
 }
