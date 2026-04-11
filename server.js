@@ -9,10 +9,19 @@ app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
+// ================= ARQUIVO =================
 const HISTORICO_FILE = "./historico.json";
 
+// ================= CACHE =================
 let cache = null;
 let tempo = 0;
+
+// ================= DATA BR =================
+function getDataBR(){
+  return new Date().toLocaleDateString("sv-SE", {
+    timeZone: "America/Sao_Paulo"
+  });
+}
 
 // ================= GRUPOS =================
 const grupos = [
@@ -44,32 +53,11 @@ const grupos = [
 ];
 
 function getGrupo(dezena) {
-  if (!dezena) return null;
   const final = dezena.slice(-2);
   for (let [nome, lista] of grupos) {
     if (lista.includes(final)) return nome;
   }
   return null;
-}
-
-// ================= EXTRAIR HORÁRIO =================
-function extrairHorario(texto) {
-  try {
-    if (!texto) return "outros";
-
-    const t = texto.toLowerCase();
-
-    if (t.includes("ptm")) return "PTM";
-    if (t.includes("ptv")) return "PTV";
-    if (t.includes("pt")) return "PT";
-
-    const hora = texto.match(/\d{2}:\d{2}|\d{2}h/);
-    if (hora) return hora[0];
-
-    return "outros";
-  } catch {
-    return "outros";
-  }
 }
 
 // ================= SCRAPER =================
@@ -109,8 +97,7 @@ async function scraperBanca(url) {
 
     return resultados;
 
-  } catch (e) {
-    console.log("Erro scraper:", url);
+  } catch {
     return [];
   }
 }
@@ -133,7 +120,7 @@ async function pegarFederal() {
     );
 
     const $ = cheerio.load(data);
-    let resultado = null;
+    const resultados = [];
 
     $("h2, h3").each((i, el) => {
       const titulo = $(el).text().trim();
@@ -151,40 +138,35 @@ async function pegarFederal() {
         if (match) nums.push(match[0]);
       });
 
-      if (nums.length >= 5 && !resultado) {
-        resultado = {
+      if (nums.length >= 5) {
+        resultados.push({
           horario: titulo,
           p1: nums[0],
           p2: nums[1],
           p3: nums[2],
           p4: nums[3],
           p5: nums[4]
-        };
+        });
       }
     });
 
-    if (resultado) return [resultado];
+    return resultados;
 
-  } catch (e) {
-    console.log("Erro Federal:", e.message);
+  } catch {
+    return [];
   }
-
-  return [];
 }
 
 // ================= HISTÓRICO =================
 function salvarHistorico(dadosHoje) {
   let historico = {};
 
-  try {
-    if (fs.existsSync(HISTORICO_FILE)) {
-      historico = JSON.parse(fs.readFileSync(HISTORICO_FILE, "utf-8"));
-    }
-  } catch {
-    historico = {};
+  if (fs.existsSync(HISTORICO_FILE)) {
+    historico = JSON.parse(fs.readFileSync(HISTORICO_FILE));
   }
 
-  const hoje = new Date().toISOString().split("T")[0];
+  const hoje = getDataBR();
+
   historico[hoje] = dadosHoje;
 
   const datas = Object.keys(historico)
@@ -199,102 +181,89 @@ function salvarHistorico(dadosHoje) {
 }
 
 function lerHistorico() {
-  try {
-    if (!fs.existsSync(HISTORICO_FILE)) return {};
-    return JSON.parse(fs.readFileSync(HISTORICO_FILE, "utf-8"));
-  } catch {
-    return {};
-  }
+  if (!fs.existsSync(HISTORICO_FILE)) return {};
+  return JSON.parse(fs.readFileSync(HISTORICO_FILE));
 }
 
 // ================= ANÁLISE =================
 function analisar(historico) {
-  try {
-    const porBanca = {};
-    const porHorario = {};
-    const gruposBanca = {};
-    const gruposHorario = {};
+  const porBanca = {};
+  const porHorario = {};
 
-    Object.values(historico || {}).forEach(dia => {
-      ["rio", "look", "nacional"].forEach(banca => {
+  const TODAS = ["rio","look","nacional","federal"];
 
-        (dia[banca] || []).forEach(res => {
+  Object.values(historico).forEach(dia => {
 
-          const horario = extrairHorario(res.horario);
+    TODAS.forEach(banca => {
 
-          if (!porBanca[banca]) porBanca[banca] = {};
-          if (!porBanca[banca][horario]) porBanca[banca][horario] = {};
+      (dia[banca] || []).forEach(res => {
 
-          if (!porHorario[horario]) porHorario[horario] = {};
+        const h = res.horario;
 
-          if (!gruposBanca[banca]) gruposBanca[banca] = {};
-          if (!gruposBanca[banca][horario]) gruposBanca[banca][horario] = {};
+        if (!porBanca[banca]) porBanca[banca] = {};
+        if (!porBanca[banca][h]) {
+          porBanca[banca][h] = { dezenas:{}, grupos:{} };
+        }
 
-          if (!gruposHorario[horario]) gruposHorario[horario] = {};
+        if (!porHorario[h]) {
+          porHorario[h] = { dezenas:{}, grupos:{} };
+        }
 
-          [res.p1, res.p2, res.p3, res.p4, res.p5].forEach(num => {
+        [res.p1,res.p2,res.p3,res.p4,res.p5].forEach(num => {
 
-            if (!num) return;
+          const dez = num.slice(-2);
 
-            const final = num.slice(-2);
+          porBanca[banca][h].dezenas[dez] =
+            (porBanca[banca][h].dezenas[dez] || 0) + 1;
 
-            porBanca[banca][horario][final] =
-              (porBanca[banca][horario][final] || 0) + 1;
+          porHorario[h].dezenas[dez] =
+            (porHorario[h].dezenas[dez] || 0) + 1;
 
-            porHorario[horario][final] =
-              (porHorario[horario][final] || 0) + 1;
+          const grupo = getGrupo(num);
 
-            const grupo = getGrupo(num);
+          if (grupo) {
+            porBanca[banca][h].grupos[grupo] =
+              (porBanca[banca][h].grupos[grupo] || 0) + 1;
 
-            if (grupo) {
-              gruposBanca[banca][horario][grupo] =
-                (gruposBanca[banca][horario][grupo] || 0) + 1;
-
-              gruposHorario[horario][grupo] =
-                (gruposHorario[horario][grupo] || 0) + 1;
-            }
-
-          });
+            porHorario[h].grupos[grupo] =
+              (porHorario[h].grupos[grupo] || 0) + 1;
+          }
 
         });
 
       });
+
     });
 
-    function top(obj) {
-      return Object.entries(obj || {})
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 5);
-    }
+  });
 
-    const resumoBanca = {};
-    Object.keys(porBanca).forEach(banca => {
-      resumoBanca[banca] = {};
-      Object.keys(porBanca[banca]).forEach(h => {
-        resumoBanca[banca][h] = {
-          topDezenas: top(porBanca[banca][h]),
-          topGrupos: top(gruposBanca[banca][h])
-        };
-      });
-    });
+  function top(obj){
+    return Object.entries(obj)
+      .sort((a,b)=>b[1]-a[1])
+      .slice(0,5);
+  }
 
-    const resumoHorario = {};
-    Object.keys(porHorario).forEach(h => {
-      resumoHorario[h] = {
-        topDezenas: top(porHorario[h]),
-        topGrupos: top(gruposHorario[h])
+  const resultado = { porBanca:{}, porHorario:{} };
+
+  Object.keys(porBanca).forEach(b=>{
+    resultado.porBanca[b] = {};
+
+    Object.keys(porBanca[b]).forEach(h=>{
+      resultado.porBanca[b][h] = {
+        topDezenas: top(porBanca[b][h].dezenas),
+        topGrupos: top(porBanca[b][h].grupos)
       };
     });
+  });
 
-    return {
-      porBanca: resumoBanca,
-      porHorario: resumoHorario
+  Object.keys(porHorario).forEach(h=>{
+    resultado.porHorario[h] = {
+      topDezenas: top(porHorario[h].dezenas),
+      topGrupos: top(porHorario[h].grupos)
     };
+  });
 
-  } catch (e) {
-    console.log("Erro análise:", e.message);
-    return { porBanca: {}, porHorario: {} };
-  }
+  return resultado;
 }
 
 // ================= PRINCIPAL =================
@@ -308,7 +277,10 @@ async function carregarTudo() {
   const bancas = await pegarBancas();
   const federal = await pegarFederal();
 
-  const dadosHoje = { ...bancas, federal };
+  const dadosHoje = {
+    ...bancas,
+    federal
+  };
 
   salvarHistorico(dadosHoje);
 
@@ -326,7 +298,7 @@ async function carregarTudo() {
   return cache;
 }
 
-// ================= ROTAS =================
+// ================= ROTA =================
 app.get("/resultados", async (req, res) => {
   const dados = await carregarTudo();
   res.json(dados);
