@@ -189,7 +189,7 @@ function lerHistorico() {
   return JSON.parse(fs.readFileSync(HISTORICO_FILE));
 }
 
-// ================= ANÁLISE =================
+// ================= ANÁLISE (IA) =================
 function analisar(historico) {
 
   const porBanca = {};
@@ -197,22 +197,21 @@ function analisar(historico) {
   const vistos = new Set();
 
   const TODAS = ["rio","look","nacional","federal"];
+  const datas = Object.keys(historico).sort().reverse();
 
-  Object.values(historico).forEach(dia => {
+  datas.forEach((data, index) => {
+
+    let peso = 1;
+    if (index === 0) peso = 3;
+    else if (index === 1) peso = 2;
+
+    const dia = historico[data];
 
     TODAS.forEach(banca => {
 
       (dia[banca] || []).forEach(res => {
 
-        const chave =
-          banca +
-          res.horario +
-          res.p1 +
-          res.p2 +
-          res.p3 +
-          res.p4 +
-          res.p5;
-
+        const chave = banca + res.horario + res.p1+res.p2+res.p3+res.p4+res.p5;
         if (vistos.has(chave)) return;
         vistos.add(chave);
 
@@ -232,19 +231,19 @@ function analisar(historico) {
           const dez = num.slice(-2);
 
           porBanca[banca][h].dezenas[dez] =
-            (porBanca[banca][h].dezenas[dez] || 0) + 1;
+            (porBanca[banca][h].dezenas[dez] || 0) + peso;
 
           porHorario[h].dezenas[dez] =
-            (porHorario[h].dezenas[dez] || 0) + 1;
+            (porHorario[h].dezenas[dez] || 0) + peso;
 
           const grupo = getGrupo(num);
 
           if (grupo) {
             porBanca[banca][h].grupos[grupo] =
-              (porBanca[banca][h].grupos[grupo] || 0) + 1;
+              (porBanca[banca][h].grupos[grupo] || 0) + peso;
 
             porHorario[h].grupos[grupo] =
-              (porHorario[h].grupos[grupo] || 0) + 1;
+              (porHorario[h].grupos[grupo] || 0) + peso;
           }
 
         });
@@ -255,36 +254,10 @@ function analisar(historico) {
 
   });
 
-  function top(obj){
-    return Object.entries(obj)
-      .sort((a,b)=>b[1]-a[1])
-      .slice(0,5);
-  }
-
-  const resultado = { porBanca:{}, porHorario:{} };
-
-  Object.keys(porBanca).forEach(b=>{
-    resultado.porBanca[b] = {};
-
-    Object.keys(porBanca[b]).forEach(h=>{
-      resultado.porBanca[b][h] = {
-        topDezenas: top(porBanca[b][h].dezenas),
-        topGrupos: top(porBanca[b][h].grupos)
-      };
-    });
-  });
-
-  Object.keys(porHorario).forEach(h=>{
-    resultado.porHorario[h] = {
-      topDezenas: top(porHorario[h].dezenas),
-      topGrupos: top(porHorario[h].grupos)
-    };
-  });
-
-  return resultado;
+  return { porBanca, porHorario };
 }
 
-// ================= PALPITES =================
+// ================= PALPITES (IA FORTE) =================
 function gerarPalpites(analise) {
 
   const palpites = {};
@@ -295,28 +268,28 @@ function gerarPalpites(analise) {
 
     Object.entries(analise.porBanca[banca]).forEach(([horario, dados]) => {
 
-      const dezenas = dados.topDezenas.map(d => d[0]);
-      const grupos = dados.topGrupos.map(g => g[0]);
+      const dezenas = Object.entries(dados.dezenas)
+        .sort((a,b)=>b[1]-a[1])
+        .map(d=>d[0]);
 
-      const pick = (arr, q) => {
-        const copia = [...arr];
-        const res = [];
+      const grupos = Object.entries(dados.grupos)
+        .sort((a,b)=>b[1]-a[1])
+        .map(g=>g[0]);
 
-        while(res.length < q && copia.length){
-          const i = Math.floor(Math.random() * copia.length);
-          res.push(copia.splice(i,1)[0]);
-        }
-
-        return res;
-      };
+      const atrasados = [];
+      for (let i=0;i<100;i++){
+        const d = String(i).padStart(2,"0");
+        if (!dezenas.includes(d)) atrasados.push(d);
+      }
 
       palpites[banca][horario] = {
-        dezena: pick(dezenas,1),
-        duqueDezena: pick(dezenas,2),
-        ternoDezena: pick(dezenas,3),
-        grupo: pick(grupos,1),
-        duqueGrupo: pick(grupos,2),
-        ternoGrupo: pick(grupos,3)
+        dezena: dezenas.slice(0,1),
+        duqueDezena: dezenas.slice(0,2),
+        ternoDezena: dezenas.slice(0,3),
+        grupo: grupos.slice(0,1),
+        duqueGrupo: grupos.slice(0,2),
+        ternoGrupo: grupos.slice(0,3),
+        dezenaAtrasada: atrasados.slice(0,3)
       };
 
     });
