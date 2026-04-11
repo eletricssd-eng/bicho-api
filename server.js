@@ -123,9 +123,11 @@ async function pegarFederal() {
     const resultados = [];
 
     $("h2, h3").each((i, el) => {
-      const titulo = $(el).text().trim();
+      const titulo = $(el).text().trim().toLowerCase();
 
-      if (!titulo.toLowerCase().includes("federal")) return;
+      // ✅ PEGAR SOMENTE 1 AO 5 PRÊMIO
+      if (!titulo.includes("federal")) return;
+      if (!titulo.includes("1º ao 5º")) return;
 
       const tabela = $(el).nextAll("table").first();
       if (!tabela.length) return;
@@ -140,7 +142,7 @@ async function pegarFederal() {
 
       if (nums.length >= 5) {
         resultados.push({
-          horario: titulo,
+          horario: "Federal",
           p1: nums[0],
           p2: nums[1],
           p3: nums[2],
@@ -152,7 +154,8 @@ async function pegarFederal() {
 
     return resultados;
 
-  } catch {
+  } catch (e) {
+    console.log("Erro Federal:", e.message);
     return [];
   }
 }
