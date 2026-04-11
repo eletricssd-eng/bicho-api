@@ -187,8 +187,10 @@ function lerHistorico() {
 
 // ================= ANÁLISE =================
 function analisar(historico) {
+
   const porBanca = {};
   const porHorario = {};
+  const vistos = new Set();
 
   const TODAS = ["rio","look","nacional","federal"];
 
@@ -197,6 +199,18 @@ function analisar(historico) {
     TODAS.forEach(banca => {
 
       (dia[banca] || []).forEach(res => {
+
+        const chave =
+          banca +
+          res.horario +
+          res.p1 +
+          res.p2 +
+          res.p3 +
+          res.p4 +
+          res.p5;
+
+        if (vistos.has(chave)) return;
+        vistos.add(chave);
 
         const h = res.horario;
 
