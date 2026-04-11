@@ -126,11 +126,9 @@ async function pegarFederal() {
       const tituloOriginal = $(el).text().trim();
       const titulo = tituloOriginal.toLowerCase();
 
-      // ✅ pegar apenas Federal 1 ao 5
       if (!titulo.includes("federal")) return;
       if (!titulo.includes("1º ao 5º")) return;
 
-      // 🔥 EXTRAIR DATA
       const matchData = tituloOriginal.match(/\d{2}\/\d{2}\/\d{4}/);
       const dataSorteio = matchData ? matchData[0] : "sem data";
 
@@ -147,7 +145,6 @@ async function pegarFederal() {
 
       if (nums.length >= 5) {
         resultados.push({
-          // ✅ agora separa por data
           horario: `Federal - ${dataSorteio}`,
           p1: nums[0],
           p2: nums[1],
@@ -160,8 +157,7 @@ async function pegarFederal() {
 
     return resultados;
 
-  } catch (e) {
-    console.log("Erro Federal:", e.message);
+  } catch {
     return [];
   }
 }
@@ -175,7 +171,6 @@ function salvarHistorico(dadosHoje) {
   }
 
   const hoje = getDataBR();
-
   historico[hoje] = dadosHoje;
 
   const datas = Object.keys(historico)
@@ -289,6 +284,48 @@ function analisar(historico) {
   return resultado;
 }
 
+// ================= PALPITES =================
+function gerarPalpites(analise) {
+
+  const palpites = {};
+
+  Object.keys(analise.porBanca).forEach(banca => {
+
+    palpites[banca] = {};
+
+    Object.entries(analise.porBanca[banca]).forEach(([horario, dados]) => {
+
+      const dezenas = dados.topDezenas.map(d => d[0]);
+      const grupos = dados.topGrupos.map(g => g[0]);
+
+      const pick = (arr, q) => {
+        const copia = [...arr];
+        const res = [];
+
+        while(res.length < q && copia.length){
+          const i = Math.floor(Math.random() * copia.length);
+          res.push(copia.splice(i,1)[0]);
+        }
+
+        return res;
+      };
+
+      palpites[banca][horario] = {
+        dezena: pick(dezenas,1),
+        duqueDezena: pick(dezenas,2),
+        ternoDezena: pick(dezenas,3),
+        grupo: pick(grupos,1),
+        duqueGrupo: pick(grupos,2),
+        ternoGrupo: pick(grupos,3)
+      };
+
+    });
+
+  });
+
+  return palpites;
+}
+
 // ================= PRINCIPAL =================
 async function carregarTudo() {
   const agora = Date.now();
@@ -309,11 +346,13 @@ async function carregarTudo() {
 
   const historico = lerHistorico();
   const analise = analisar(historico);
+  const palpites = gerarPalpites(analise);
 
   cache = {
     atualizado: new Date().toLocaleString(),
     historico,
-    analise
+    analise,
+    palpites
   };
 
   tempo = agora;
