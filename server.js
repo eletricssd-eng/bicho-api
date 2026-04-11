@@ -123,11 +123,16 @@ async function pegarFederal() {
     const resultados = [];
 
     $("h2, h3").each((i, el) => {
-      const titulo = $(el).text().trim().toLowerCase();
+      const tituloOriginal = $(el).text().trim();
+      const titulo = tituloOriginal.toLowerCase();
 
-      // ✅ PEGAR SOMENTE 1 AO 5 PRÊMIO
+      // ✅ pegar apenas Federal 1 ao 5
       if (!titulo.includes("federal")) return;
       if (!titulo.includes("1º ao 5º")) return;
+
+      // 🔥 EXTRAIR DATA
+      const matchData = tituloOriginal.match(/\d{2}\/\d{2}\/\d{4}/);
+      const dataSorteio = matchData ? matchData[0] : "sem data";
 
       const tabela = $(el).nextAll("table").first();
       if (!tabela.length) return;
@@ -142,7 +147,8 @@ async function pegarFederal() {
 
       if (nums.length >= 5) {
         resultados.push({
-          horario: "Federal",
+          // ✅ agora separa por data
+          horario: `Federal - ${dataSorteio}`,
           p1: nums[0],
           p2: nums[1],
           p3: nums[2],
