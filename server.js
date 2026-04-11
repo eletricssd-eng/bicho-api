@@ -268,6 +268,7 @@ function gerarPalpites(analise) {
 
     Object.entries(analise.porBanca[banca]).forEach(([horario, dados]) => {
 
+      // ===== ORDENAR POR FORÇA =====
       const dezenas = Object.entries(dados.dezenas)
         .sort((a,b)=>b[1]-a[1])
         .map(d=>d[0]);
@@ -276,20 +277,34 @@ function gerarPalpites(analise) {
         .sort((a,b)=>b[1]-a[1])
         .map(g=>g[0]);
 
+      // ===== ATRASADOS DO MESMO HORÁRIO =====
       const atrasados = [];
-      for (let i=0;i<100;i++){
+      for(let i=0;i<100;i++){
         const d = String(i).padStart(2,"0");
-        if (!dezenas.includes(d)) atrasados.push(d);
+        if(!dezenas.includes(d)){
+          atrasados.push(d);
+        }
       }
 
+      // ===== PALPITE FINAL =====
       palpites[banca][horario] = {
+        proximo: true, // 🔥 identifica que é previsão
         dezena: dezenas.slice(0,1),
         duqueDezena: dezenas.slice(0,2),
         ternoDezena: dezenas.slice(0,3),
+
         grupo: grupos.slice(0,1),
         duqueGrupo: grupos.slice(0,2),
         ternoGrupo: grupos.slice(0,3),
-        dezenaAtrasada: atrasados.slice(0,3)
+
+        atrasadas: atrasados.slice(0,5),
+
+        // 🔥 EXTRA INTELIGENTE
+        mistura: [
+          dezenas[0],
+          atrasados[0],
+          dezenas[1]
+        ]
       };
 
     });
