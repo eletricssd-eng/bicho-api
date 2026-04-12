@@ -43,19 +43,38 @@ async function scraper(url){
 
       $(tabela).find("tr").each((i,tr)=>{
         const texto = $(tr).text();
+
         const match = texto.match(/\d{4}/);
         if(match) nums.push(match[0]);
       });
 
+      // 🔥 FILTRO PRINCIPAL (AQUI ESTÁ A CORREÇÃO)
+      const tituloLower = titulo.toLowerCase();
+
+      const isFederal = tituloLower.includes("federal");
+
+      const is10 = tituloLower.includes("1 ao 10") || tituloLower.includes("10º");
+      const is5  = tituloLower.includes("1 ao 5") || tituloLower.includes("5º");
+
+      // ❌ remove versão errada da federal
+      if(isFederal && is10) return;
+
+      // ✅ garante só 1 ao 5
       if(nums.length >= 5){
+
         lista.push({
-          horario: titulo,
+          horario: titulo
+            .replace(/1 ao 10º?/gi, "")
+            .replace(/1 ao 5º?/gi, "")
+            .trim(),
+
           p1: nums[0],
           p2: nums[1],
           p3: nums[2],
           p4: nums[3],
           p5: nums[4]
         });
+
       }
 
     });
