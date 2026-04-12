@@ -163,32 +163,45 @@ async function pegarFederal() {
 }
 
 // ================= HISTÓRICO =================
-function salvarHistorico(dadosHoje) {
+function salvarHistorico(dadosHoje){
+
   let historico = {};
 
   if (fs.existsSync(HISTORICO_FILE)) {
     historico = JSON.parse(fs.readFileSync(HISTORICO_FILE));
   }
 
-  const hoje = getDataBR();
-  historico[hoje] = dadosHoje;
+  // 🧠 pega data do próprio resultado (mais confiável)
+  let dataBase = new Date().toISOString().split("T")[0];
 
+  try {
+    const exemplo = dadosHoje.rio?.[0]?.horario 
+                 || dadosHoje.look?.[0]?.horario
+                 || dadosHoje.nacional?.[0]?.horario
+                 || dadosHoje.federal?.[0]?.horario;
+
+    const match = exemplo?.match(/\d{2}\/\d{2}\/\d{4}/);
+
+    if(match){
+      const [dia, mes, ano] = match[0].split("/");
+      dataBase = `${ano}-${mes}-${dia}`;
+    }
+
+  } catch {}
+
+  // salva corretamente por data
+  historico[dataBase] = dadosHoje;
+
+  // mantém só últimos 7 dias reais
   const datas = Object.keys(historico)
-    .sort()
-    .reverse()
-    .slice(0, 7);
+    .sort((a,b)=> new Date(b) - new Date(a))
+    .slice(0,7);
 
   const novo = {};
   datas.forEach(d => novo[d] = historico[d]);
 
   fs.writeFileSync(HISTORICO_FILE, JSON.stringify(novo, null, 2));
 }
-
-function lerHistorico() {
-  if (!fs.existsSync(HISTORICO_FILE)) return {};
-  return JSON.parse(fs.readFileSync(HISTORICO_FILE));
-}
-
 // ================= ANÁLISE (IA) =================
 function analisar(historico) {
 
