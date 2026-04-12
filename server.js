@@ -23,17 +23,16 @@ async function scraper(url){
     const $ = cheerio.load(data);
     const lista = [];
 
-    $("h2, h3").each((i, el)=>{
+    $(".col-md-12").each((i, bloco)=>{
 
-      const titulo = $(el).text().trim();
-      const tabela = $(el).nextAll("table").first();
-      if(!tabela.length) return;
+      const titulo = $(bloco).find("h3").text().trim();
+      if(!titulo) return;
 
       const nums = [];
 
-      tabela.find("tr").each((i,tr)=>{
+      $(bloco).find("table tr").each((i,tr)=>{
 
-        if(i >= 5) return; // 🔥 SOMENTE 1 AO 5
+        if(i >= 5) return; // 🔥 só 1º ao 5º
 
         const texto = $(tr).text();
         const match = texto.match(/\d{4}/);
@@ -57,7 +56,8 @@ async function scraper(url){
 
     return lista;
 
-  }catch{
+  }catch(e){
+    console.log("erro scraper:", url);
     return [];
   }
 }
