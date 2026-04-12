@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 3000;
 const HISTORICO_FILE = "./dados.json";
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER (ROBUSTO)
+// 🔍 SCRAPER
 //////////////////////////////////////////////////
 
 async function scraper(url){
@@ -29,7 +29,6 @@ async function scraper(url){
 
       let titulo = "";
 
-      // tenta pegar título próximo
       const prev = $(tabela).prevAll("h2, h3, strong").first();
 
       if(prev.length){
@@ -43,17 +42,11 @@ async function scraper(url){
       const nums = [];
 
       $(tabela).find("tr").each((i,tr)=>{
-
         const texto = $(tr).text();
         const match = texto.match(/\d{4}/);
-
-        if(match){
-          nums.push(match[0]);
-        }
-
+        if(match) nums.push(match[0]);
       });
 
-      // ✅ pega apenas 1º ao 5º prêmio
       if(nums.length >= 5){
         lista.push({
           horario: titulo,
@@ -88,11 +81,28 @@ async function pegarBancas(){
 }
 
 //////////////////////////////////////////////////
-// 🇧🇷 FEDERAL
+// 🇧🇷 FEDERAL (CORRIGIDA)
 //////////////////////////////////////////////////
 
 async function pegarFederal(){
-  return await scraper("https://www.resultadofacil.com.br/resultado-banca-federal");
+  let lista = await scraper("https://www.resultadofacil.com.br/resultado-banca-federal");
+
+  // 🔥 FORÇA PADRÃO 1 AO 5 + LIMPA TEXTO
+  lista = lista.map(item => ({
+    horario: item.horario
+      .replace(/1 ao 10º?/gi, "")
+      .replace(/1 ao 5º?/gi, "")
+      .replace(/resultado do dia/gi, "")
+      .trim(),
+
+    p1: item.p1,
+    p2: item.p2,
+    p3: item.p3,
+    p4: item.p4,
+    p5: item.p5
+  }));
+
+  return lista;
 }
 
 //////////////////////////////////////////////////
@@ -102,13 +112,9 @@ async function pegarFederal(){
 function lerHistorico(){
   try{
     if(!fs.existsSync(HISTORICO_FILE)) return {};
-
     const data = fs.readFileSync(HISTORICO_FILE);
-
     if(!data || data.length === 0) return {};
-
     return JSON.parse(data);
-
   }catch{
     return {};
   }
@@ -117,7 +123,6 @@ function lerHistorico(){
 function salvarHistorico(dadosHoje){
 
   let historico = lerHistorico();
-
   let dataBase = new Date().toISOString().split("T")[0];
 
   try{
@@ -173,7 +178,6 @@ async function carregarTudo(){
     federal
   };
 
-  // 🔥 SEMPRE SALVA (corrigido)
   salvarHistorico(dadosHoje);
 
   const historico = lerHistorico();
