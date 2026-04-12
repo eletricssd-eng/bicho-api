@@ -11,48 +11,7 @@ const PORT = process.env.PORT || 3000;
 const HISTORICO_FILE = "./dados.json";
 
 //////////////////////////////////////////////////
-// 🐾 GRUPOS
-//////////////////////////////////////////////////
-
-const grupos = [
-  ["Avestruz", ["01","02","03","04"]],
-  ["Águia", ["05","06","07","08"]],
-  ["Burro", ["09","10","11","12"]],
-  ["Borboleta", ["13","14","15","16"]],
-  ["Cachorro", ["17","18","19","20"]],
-  ["Cabra", ["21","22","23","24"]],
-  ["Carneiro", ["25","26","27","28"]],
-  ["Camelo", ["29","30","31","32"]],
-  ["Cobra", ["33","34","35","36"]],
-  ["Coelho", ["37","38","39","40"]],
-  ["Cavalo", ["41","42","43","44"]],
-  ["Elefante", ["45","46","47","48"]],
-  ["Galo", ["49","50","51","52"]],
-  ["Gato", ["53","54","55","56"]],
-  ["Jacaré", ["57","58","59","60"]],
-  ["Leão", ["61","62","63","64"]],
-  ["Macaco", ["65","66","67","68"]],
-  ["Porco", ["69","70","71","72"]],
-  ["Pavão", ["73","74","75","76"]],
-  ["Peru", ["77","78","79","80"]],
-  ["Touro", ["81","82","83","84"]],
-  ["Tigre", ["85","86","87","88"]],
-  ["Urso", ["89","90","91","92"]],
-  ["Veado", ["93","94","95","96"]],
-  ["Vaca", ["97","98","99","00"]],
-];
-
-function getGrupo(num){
-  if(!num) return null;
-  const final = num.slice(-2);
-  for (let [nome, lista] of grupos){
-    if(lista.includes(final)) return nome;
-  }
-  return null;
-}
-
-//////////////////////////////////////////////////
-// 🔍 SCRAPER (SEGURO)
+// SCRAPER (CORRIGIDO 1 AO 5)
 //////////////////////////////////////////////////
 
 async function scraper(url){
@@ -73,72 +32,14 @@ async function scraper(url){
       const nums = [];
 
       tabela.find("tr").each((i,tr)=>{
-        const t = $(tr).text();
-        const m = t.match(/\d{4}/);
-        if(m) nums.push(m[0]);
-      });
 
-      if(nums.length >= 5){
-        lista.push({
-          horario: titulo,
-          p1: nums[0],
-          p2: nums[1],
-          p3: nums[2],
-          p4: nums[3],
-          p5: nums[4]
-        });
-      }
+        if(i >= 5) return; // 🔥 SOMENTE 1 AO 5
 
-    });
+        const texto = $(tr).text();
+        const match = texto.match(/\d{4}/);
 
-    return lista;
+        if(match) nums.push(match[0]);
 
-  }catch(e){
-    console.log("erro scraper:", url);
-    return [];
-  }
-}
-
-//////////////////////////////////////////////////
-// 🏦 BANCAS
-//////////////////////////////////////////////////
-
-async function pegarBancas(){
-  return {
-    rio: await scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
-    look: await scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
-    nacional: await scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje")
-  };
-}
-
-//////////////////////////////////////////////////
-// 🇧🇷 FEDERAL (APENAS 1º AO 5º)
-//////////////////////////////////////////////////
-
-async function pegarFederal(){
-  try{
-    const { data } = await axios.get(
-      "https://www.resultadofacil.com.br/resultado-banca-federal",
-      { headers: { "User-Agent": "Mozilla/5.0" } }
-    );
-
-    const $ = cheerio.load(data);
-    let lista = [];
-
-    $("h2, h3").each((i, el)=>{
-
-      const titulo = $(el).text().trim();
-      if(!titulo.toLowerCase().includes("federal")) return;
-
-      const tabela = $(el).nextAll("table").first();
-      if(!tabela.length) return;
-
-      const nums = [];
-
-      tabela.find("tr").each((i,tr)=>{
-        const t = $(tr).text();
-        const m = t.match(/\d{4}/);
-        if(m) nums.push(m[0]);
       });
 
       if(nums.length >= 5){
@@ -162,20 +63,41 @@ async function pegarFederal(){
 }
 
 //////////////////////////////////////////////////
-// 💾 HISTÓRICO (BLINDADO)
+// BANCAS
 //////////////////////////////////////////////////
+
+async function pegarBancas(){
+  return {
+    rio: await scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
+    look: await scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
+    nacional: await scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje")
+  };
+}
+
+//////////////////////////////////////////////////
+// FEDERAL (1 AO 5)
+//////////////////////////////////////////////////
+
+async function pegarFederal(){
+  return await scraper("https://www.resultadofacil.com.br/resultado-banca-federal");
+}
+
+//////////////////////////////////////////////////
+// HISTÓRICO
+//////////////////////////////////////////////////
+
+function lerHistorico(){
+  try{
+    if(!fs.existsSync(HISTORICO_FILE)) return {};
+    return JSON.parse(fs.readFileSync(HISTORICO_FILE));
+  }catch{
+    return {};
+  }
+}
 
 function salvarHistorico(dadosHoje){
 
-  let historico = {};
-
-  if(fs.existsSync(HISTORICO_FILE)){
-    try{
-      historico = JSON.parse(fs.readFileSync(HISTORICO_FILE));
-    }catch{
-      historico = {};
-    }
-  }
+  let historico = lerHistorico();
 
   let dataBase = new Date().toISOString().split("T")[0];
 
@@ -206,17 +128,8 @@ function salvarHistorico(dadosHoje){
   fs.writeFileSync(HISTORICO_FILE, JSON.stringify(novo,null,2));
 }
 
-function lerHistorico(){
-  try{
-    if(!fs.existsSync(HISTORICO_FILE)) return {};
-    return JSON.parse(fs.readFileSync(HISTORICO_FILE));
-  }catch{
-    return {};
-  }
-}
-
 //////////////////////////////////////////////////
-// 🚀 PRINCIPAL
+// MAIN
 //////////////////////////////////////////////////
 
 let cache = null;
@@ -231,10 +144,7 @@ async function carregarTudo(){
   const bancas = await pegarBancas();
   const federal = await pegarFederal();
 
-  const dadosHoje = {
-    ...bancas,
-    federal
-  };
+  const dadosHoje = { ...bancas, federal };
 
   salvarHistorico(dadosHoje);
 
@@ -251,7 +161,7 @@ async function carregarTudo(){
 }
 
 //////////////////////////////////////////////////
-// 🌐 ROTA
+// ROTA
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req,res)=>{
@@ -260,5 +170,5 @@ app.get("/resultados", async (req,res)=>{
 });
 
 app.listen(PORT, ()=>{
-  console.log("🚀 server rodando");
+  console.log("🚀 Server rodando");
 });
