@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 3000;
 const HISTORICO_FILE = "./dados.json";
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER (BLINDADO)
+// 🔍 SCRAPER (ROBUSTO)
 //////////////////////////////////////////////////
 
 async function scraper(url){
@@ -23,11 +23,18 @@ async function scraper(url){
     const $ = cheerio.load(data);
     const lista = [];
 
-    $("table").each((i, tabela)=>{
+    const tabelas = $("table");
 
-      const bloco = $(tabela).closest("div");
+    tabelas.each((i, tabela)=>{
 
-      let titulo = bloco.find("h2, h3, strong").first().text().trim();
+      let titulo = "";
+
+      // tenta pegar título próximo
+      const prev = $(tabela).prevAll("h2, h3, strong").first();
+
+      if(prev.length){
+        titulo = prev.text().trim();
+      }
 
       if(!titulo || titulo.length < 5){
         titulo = "Horário " + (i+1);
@@ -37,15 +44,16 @@ async function scraper(url){
 
       $(tabela).find("tr").each((i,tr)=>{
 
-        if(i >= 5) return; // ✅ só 1º ao 5º prêmio
-
         const texto = $(tr).text();
         const match = texto.match(/\d{4}/);
 
-        if(match) nums.push(match[0]);
+        if(match){
+          nums.push(match[0]);
+        }
 
       });
 
+      // ✅ pega apenas 1º ao 5º prêmio
       if(nums.length >= 5){
         lista.push({
           horario: titulo,
@@ -96,6 +104,7 @@ function lerHistorico(){
     if(!fs.existsSync(HISTORICO_FILE)) return {};
 
     const data = fs.readFileSync(HISTORICO_FILE);
+
     if(!data || data.length === 0) return {};
 
     return JSON.parse(data);
@@ -164,15 +173,8 @@ async function carregarTudo(){
     federal
   };
 
-  // ✅ evita salvar vazio
-  if(
-    dadosHoje.rio.length ||
-    dadosHoje.look.length ||
-    dadosHoje.nacional.length ||
-    dadosHoje.federal.length
-  ){
-    salvarHistorico(dadosHoje);
-  }
+  // 🔥 SEMPRE SALVA (corrigido)
+  salvarHistorico(dadosHoje);
 
   const historico = lerHistorico();
 
