@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 3000;
 const HISTORICO_FILE = "./dados.json";
 
 //////////////////////////////////////////////////
-// SCRAPER (CORRIGIDO 1 AO 5)
+// 🔍 SCRAPER (BLINDADO)
 //////////////////////////////////////////////////
 
 async function scraper(url){
@@ -23,16 +23,21 @@ async function scraper(url){
     const $ = cheerio.load(data);
     const lista = [];
 
-    $(".col-md-12").each((i, bloco)=>{
+    $("table").each((i, tabela)=>{
 
-      const titulo = $(bloco).find("h3").text().trim();
-      if(!titulo) return;
+      const bloco = $(tabela).closest("div");
+
+      let titulo = bloco.find("h2, h3, strong").first().text().trim();
+
+      if(!titulo || titulo.length < 5){
+        titulo = "Horário " + (i+1);
+      }
 
       const nums = [];
 
-      $(bloco).find("table tr").each((i,tr)=>{
+      $(tabela).find("tr").each((i,tr)=>{
 
-        if(i >= 5) return; // 🔥 só 1º ao 5º
+        if(i >= 5) return; // ✅ só 1º ao 5º prêmio
 
         const texto = $(tr).text();
         const match = texto.match(/\d{4}/);
@@ -57,13 +62,13 @@ async function scraper(url){
     return lista;
 
   }catch(e){
-    console.log("erro scraper:", url);
+    console.log("❌ erro scraper:", url);
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// BANCAS
+// 🏦 BANCAS
 //////////////////////////////////////////////////
 
 async function pegarBancas(){
@@ -75,7 +80,7 @@ async function pegarBancas(){
 }
 
 //////////////////////////////////////////////////
-// FEDERAL (1 AO 5)
+// 🇧🇷 FEDERAL
 //////////////////////////////////////////////////
 
 async function pegarFederal(){
@@ -83,13 +88,18 @@ async function pegarFederal(){
 }
 
 //////////////////////////////////////////////////
-// HISTÓRICO
+// 💾 HISTÓRICO
 //////////////////////////////////////////////////
 
 function lerHistorico(){
   try{
     if(!fs.existsSync(HISTORICO_FILE)) return {};
-    return JSON.parse(fs.readFileSync(HISTORICO_FILE));
+
+    const data = fs.readFileSync(HISTORICO_FILE);
+    if(!data || data.length === 0) return {};
+
+    return JSON.parse(data);
+
   }catch{
     return {};
   }
@@ -105,13 +115,14 @@ function salvarHistorico(dadosHoje){
     const exemplo =
       dadosHoje.rio?.[0]?.horario ||
       dadosHoje.look?.[0]?.horario ||
-      dadosHoje.nacional?.[0]?.horario;
+      dadosHoje.nacional?.[0]?.horario ||
+      dadosHoje.federal?.[0]?.horario;
 
-    const m = exemplo?.match(/\d{2}\/\d{2}\/\d{4}/);
+    const match = exemplo?.match(/\d{2}\/\d{2}\/\d{4}/);
 
-    if(m){
-      const [d,mn,a] = m[0].split("/");
-      dataBase = `${a}-${mn}-${d}`;
+    if(match){
+      const [d,m,a] = match[0].split("/");
+      dataBase = `${a}-${m}-${d}`;
     }
 
   }catch{}
@@ -119,17 +130,17 @@ function salvarHistorico(dadosHoje){
   historico[dataBase] = dadosHoje;
 
   const datas = Object.keys(historico)
-    .sort((a,b)=> new Date(b)-new Date(a))
+    .sort((a,b)=> new Date(b) - new Date(a))
     .slice(0,7);
 
   const novo = {};
-  datas.forEach(d=> novo[d] = historico[d]);
+  datas.forEach(d => novo[d] = historico[d]);
 
-  fs.writeFileSync(HISTORICO_FILE, JSON.stringify(novo,null,2));
+  fs.writeFileSync(HISTORICO_FILE, JSON.stringify(novo, null, 2));
 }
 
 //////////////////////////////////////////////////
-// MAIN
+// 🚀 MAIN
 //////////////////////////////////////////////////
 
 let cache = null;
@@ -139,14 +150,29 @@ async function carregarTudo(){
 
   const agora = Date.now();
 
-  if(cache && agora - tempo < 60000) return cache;
+  if(cache && agora - tempo < 60000){
+    return cache;
+  }
+
+  console.log("🔄 Atualizando dados...");
 
   const bancas = await pegarBancas();
   const federal = await pegarFederal();
 
-  const dadosHoje = { ...bancas, federal };
+  const dadosHoje = {
+    ...bancas,
+    federal
+  };
 
-  salvarHistorico(dadosHoje);
+  // ✅ evita salvar vazio
+  if(
+    dadosHoje.rio.length ||
+    dadosHoje.look.length ||
+    dadosHoje.nacional.length ||
+    dadosHoje.federal.length
+  ){
+    salvarHistorico(dadosHoje);
+  }
 
   const historico = lerHistorico();
 
@@ -161,7 +187,7 @@ async function carregarTudo(){
 }
 
 //////////////////////////////////////////////////
-// ROTA
+// 🌐 ROTA
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req,res)=>{
@@ -169,6 +195,10 @@ app.get("/resultados", async (req,res)=>{
   res.json(dados);
 });
 
+//////////////////////////////////////////////////
+// 🚀 START
+//////////////////////////////////////////////////
+
 app.listen(PORT, ()=>{
-  console.log("🚀 Server rodando");
+  console.log("🚀 Server rodando na porta", PORT);
 });
