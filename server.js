@@ -8,7 +8,7 @@ const app = express();
 app.use(cors());
 
 const PORT = process.env.PORT || 3000;
-const HISTORICO_FILE = "./dados.json";
+const HISTORICO_FILE = "./historico.json";
 
 //////////////////////////////////////////////////
 // 🔍 SCRAPER
@@ -142,6 +142,7 @@ function lerHistorico(){
 function salvarHistorico(dadosHoje){
 
   let historico = lerHistorico();
+
   let dataBase = new Date().toISOString().split("T")[0];
 
   try{
@@ -160,8 +161,34 @@ function salvarHistorico(dadosHoje){
 
   }catch{}
 
-  historico[dataBase] = dadosHoje;
+  // 🔥 garante estrutura
+  if(!historico[dataBase]){
+    historico[dataBase] = {
+      rio: [],
+      look: [],
+      nacional: [],
+      federal: []
+    };
+  }
 
+  const bancas = ["rio","look","nacional","federal"];
+
+  bancas.forEach(banca => {
+
+    const novos = dadosHoje[banca] || [];
+    const antigos = historico[dataBase][banca] || [];
+
+    // 🔥 remove duplicados por horário
+    const mapa = {};
+
+    antigos.forEach(i => mapa[i.horario] = i);
+    novos.forEach(i => mapa[i.horario] = i);
+
+    historico[dataBase][banca] = Object.values(mapa);
+
+  });
+
+  // 🔥 mantém só 7 dias
   const datas = Object.keys(historico)
     .sort((a,b)=> new Date(b) - new Date(a))
     .slice(0,7);
