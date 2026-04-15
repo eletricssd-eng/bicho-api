@@ -25,13 +25,16 @@ async function conectarMongo() {
 await conectarMongo();
 
 //////////////////////////////////////////////////
-// 📦 MODEL
+// 📦 MODEL (COM UNIQUE)
 //////////////////////////////////////////////////
 
 const ResultadoSchema = new mongoose.Schema({
+  uniqueId: { type: String, unique: true },
+
   data: String,
   banca: String,
   horario: String,
+
   p1: String,
   p2: String,
   p3: String,
@@ -42,7 +45,7 @@ const ResultadoSchema = new mongoose.Schema({
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER (FEDERAL BLINDADA)
+// 🔍 SCRAPER (FEDERAL CORRIGIDA)
 //////////////////////////////////////////////////
 
 async function scraper(url) {
@@ -61,21 +64,11 @@ async function scraper(url) {
 
       const tituloLower = titulo.toLowerCase();
 
-      //////////////////////////////////////////////////
-      // 🔥 FILTRO FEDERAL PERFEITO
-      //////////////////////////////////////////////////
-
+      // 🔥 FILTRO FEDERAL
       const isFederal = tituloLower.includes("federal");
-
       const is5 = /1\s*(º|°)?\s*ao\s*5/.test(tituloLower);
-      const is10 = /1\s*(º|°)?\s*ao\s*10/.test(tituloLower);
 
-      // ❌ se for federal e NÃO for 1 ao 5 → ignora
       if (isFederal && !is5) return;
-
-      //////////////////////////////////////////////////
-      // 🔢 PEGAR NÚMEROS
-      //////////////////////////////////////////////////
 
       const nums = [];
 
@@ -84,13 +77,9 @@ async function scraper(url) {
         if (match) nums.push(match[0]);
       });
 
-      //////////////////////////////////////////////////
-      // 🔥 GARANTIA ABSOLUTA
-      //////////////////////////////////////////////////
-
       if (nums.length >= 5) {
 
-        const numeros = nums.slice(0, 5); // corta sempre 5
+        const numeros = nums.slice(0, 5);
 
         lista.push({
           horario: titulo
@@ -119,7 +108,7 @@ async function scraper(url) {
 }
 
 //////////////////////////////////////////////////
-// 🏦 PEGAR TODAS BANCAS
+// 🏦 PEGAR DADOS
 //////////////////////////////////////////////////
 
 async function pegarTudo() {
@@ -132,7 +121,7 @@ async function pegarTudo() {
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR NO BANCO (SEM DUPLICAR)
+// 💾 SALVAR (ANTI DUPLICAÇÃO REAL)
 //////////////////////////////////////////////////
 
 async function salvarBanco(dados) {
@@ -143,24 +132,26 @@ async function salvarBanco(dados) {
 
     for (const item of dados[banca]) {
 
-      const existe = await Resultado.findOne({
-        data: dataHoje,
-        banca,
-        horario: item.horario
-      });
+      const uniqueId = `${dataHoje}-${banca}-${item.p1}-${item.p2}-${item.p3}-${item.p4}-${item.p5}`;
 
-      if (existe) continue;
-
-      await Resultado.create({
-        data: dataHoje,
-        banca,
-        horario: item.horario,
-        p1: item.p1,
-        p2: item.p2,
-        p3: item.p3,
-        p4: item.p4,
-        p5: item.p5
-      });
+      try {
+        await Resultado.create({
+          uniqueId,
+          data: dataHoje,
+          banca,
+          horario: item.horario,
+          p1: item.p1,
+          p2: item.p2,
+          p3: item.p3,
+          p4: item.p4,
+          p5: item.p5
+        });
+      } catch (err) {
+        // 🔥 ignora duplicado automaticamente
+        if (err.code !== 11000) {
+          console.log("Erro ao salvar:", err.message);
+        }
+      }
 
     }
 
@@ -169,7 +160,7 @@ async function salvarBanco(dados) {
 }
 
 //////////////////////////////////////////////////
-// 📊 HISTÓRICO
+// 📊 HISTÓRICO LIMPO
 //////////////////////////////////////////////////
 
 async function pegarHistorico() {
