@@ -10,22 +10,31 @@ app.use(cors());
 const PORT = process.env.PORT || 3000;
 
 //////////////////////////////////////////////////
-// 🔗 CONEXÃO MONGODB
+// 🔥 VERIFICA MONGO
 //////////////////////////////////////////////////
 
-async function conectarMongo() {
-  try {
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log("✅ MongoDB conectado");
-  } catch (err) {
-    console.log("❌ erro Mongo:", err.message);
-  }
+if (!process.env.MONGO_URI) {
+  console.log("❌ MONGO_URI não definida");
+  process.exit(1);
 }
 
-await conectarMongo();
+//////////////////////////////////////////////////
+// 🔗 CONEXÃO MONGODB (SEM AWAIT)
+//////////////////////////////////////////////////
+
+function conectarMongo() {
+  mongoose.connect(process.env.MONGO_URI)
+    .then(() => console.log("✅ MongoDB conectado"))
+    .catch(err => {
+      console.log("❌ erro Mongo:", err.message);
+      process.exit(1);
+    });
+}
+
+conectarMongo();
 
 //////////////////////////////////////////////////
-// 📦 MODEL (ANTI DUPLICAÇÃO)
+// 📦 MODEL
 //////////////////////////////////////////////////
 
 const ResultadoSchema = new mongoose.Schema({
@@ -57,7 +66,7 @@ async function scraper(url) {
     const $ = cheerio.load(data);
     const lista = [];
 
-    const jaVistos = new Set(); // 🔥 anti duplicação
+    const jaVistos = new Set();
 
     $("table").each((i, tabela) => {
 
@@ -66,18 +75,11 @@ async function scraper(url) {
 
       const tituloLower = titulo.toLowerCase();
 
-      //////////////////////////////////////////////////
-      // 🔥 FILTRO FEDERAL
-      //////////////////////////////////////////////////
-
+      // 🔥 FEDERAL: só 1 ao 5
       const isFederal = tituloLower.includes("federal");
       const is5 = /1\s*(º|°)?\s*ao\s*5/.test(tituloLower);
 
       if (isFederal && !is5) return;
-
-      //////////////////////////////////////////////////
-      // 🔢 PEGAR NÚMEROS
-      //////////////////////////////////////////////////
 
       const nums = [];
 
@@ -90,14 +92,9 @@ async function scraper(url) {
 
         const numeros = nums.slice(0, 5);
 
-        //////////////////////////////////////////////////
-        // 🔥 ANTI DUPLICAÇÃO NO SCRAPER
-        //////////////////////////////////////////////////
-
+        // 🔥 evita duplicado do site
         const assinatura = numeros.join("-");
-
         if (jaVistos.has(assinatura)) return;
-
         jaVistos.add(assinatura);
 
         lista.push({
@@ -140,7 +137,7 @@ async function pegarTudo() {
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR (ANTI DUPLICAÇÃO FINAL)
+// 💾 SALVAR NO BANCO (ANTI DUPLICAÇÃO)
 //////////////////////////////////////////////////
 
 async function salvarBanco(dados) {
@@ -166,7 +163,6 @@ async function salvarBanco(dados) {
           p5: item.p5
         });
       } catch (err) {
-        // ignora duplicado
         if (err.code !== 11000) {
           console.log("Erro ao salvar:", err.message);
         }
@@ -221,16 +217,23 @@ async function pegarHistorico() {
 
 app.get("/resultados", async (req, res) => {
 
-  const dados = await pegarTudo();
+  try {
 
-  await salvarBanco(dados);
+    const dados = await pegarTudo();
 
-  const historico = await pegarHistorico();
+    await salvarBanco(dados);
 
-  res.json({
-    atualizado: new Date().toLocaleString(),
-    historico
-  });
+    const historico = await pegarHistorico();
+
+    res.json({
+      atualizado: new Date().toLocaleString(),
+      historico
+    });
+
+  } catch (err) {
+    console.log("❌ erro rota:", err.message);
+    res.status(500).json({ erro: "Erro no servidor" });
+  }
 
 });
 
