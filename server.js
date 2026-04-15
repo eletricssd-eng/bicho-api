@@ -42,7 +42,7 @@ const ResultadoSchema = new mongoose.Schema({
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER (CORRIGIDO)
+// 🔍 SCRAPER (FEDERAL BLINDADA)
 //////////////////////////////////////////////////
 
 async function scraper(url) {
@@ -61,19 +61,21 @@ async function scraper(url) {
 
       const tituloLower = titulo.toLowerCase();
 
+      //////////////////////////////////////////////////
       // 🔥 FILTRO FEDERAL PERFEITO
+      //////////////////////////////////////////////////
+
       const isFederal = tituloLower.includes("federal");
 
-      const is10 = /1\s*(º|°)?\s*ao\s*10/.test(tituloLower) ||
-                   tituloLower.includes("10º") ||
-                   tituloLower.includes("10°");
+      const is5 = /1\s*(º|°)?\s*ao\s*5/.test(tituloLower);
+      const is10 = /1\s*(º|°)?\s*ao\s*10/.test(tituloLower);
 
-      const is5 = /1\s*(º|°)?\s*ao\s*5/.test(tituloLower) ||
-                  tituloLower.includes("5º") ||
-                  tituloLower.includes("5°");
-
-      // ❌ bloqueia tudo que não for 1 ao 5
+      // ❌ se for federal e NÃO for 1 ao 5 → ignora
       if (isFederal && !is5) return;
+
+      //////////////////////////////////////////////////
+      // 🔢 PEGAR NÚMEROS
+      //////////////////////////////////////////////////
 
       const nums = [];
 
@@ -82,10 +84,13 @@ async function scraper(url) {
         if (match) nums.push(match[0]);
       });
 
+      //////////////////////////////////////////////////
+      // 🔥 GARANTIA ABSOLUTA
+      //////////////////////////////////////////////////
+
       if (nums.length >= 5) {
 
-        // 🔥 garante só 5 prêmios
-        if (nums.length > 5) nums.length = 5;
+        const numeros = nums.slice(0, 5); // corta sempre 5
 
         lista.push({
           horario: titulo
@@ -94,11 +99,11 @@ async function scraper(url) {
             .replace(/resultado do dia/gi, "")
             .trim(),
 
-          p1: nums[0],
-          p2: nums[1],
-          p3: nums[2],
-          p4: nums[3],
-          p5: nums[4]
+          p1: numeros[0],
+          p2: numeros[1],
+          p3: numeros[2],
+          p4: numeros[3],
+          p5: numeros[4]
         });
 
       }
@@ -138,7 +143,6 @@ async function salvarBanco(dados) {
 
     for (const item of dados[banca]) {
 
-      // 🔥 evita duplicado
       const existe = await Resultado.findOne({
         data: dataHoje,
         banca,
@@ -165,7 +169,7 @@ async function salvarBanco(dados) {
 }
 
 //////////////////////////////////////////////////
-// 📊 HISTÓRICO ORGANIZADO
+// 📊 HISTÓRICO
 //////////////////////////////////////////////////
 
 async function pegarHistorico() {
