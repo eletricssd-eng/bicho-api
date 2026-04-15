@@ -10,7 +10,7 @@ app.use(cors());
 const PORT = process.env.PORT || 3000;
 
 //////////////////////////////////////////////////
-// 🔗 CONEXÃO MONGODB (GARANTIDA)
+// 🔗 CONEXÃO MONGODB
 //////////////////////////////////////////////////
 
 async function conectarMongo() {
@@ -42,7 +42,7 @@ const ResultadoSchema = new mongoose.Schema({
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER
+// 🔍 SCRAPER (CORRIGIDO)
 //////////////////////////////////////////////////
 
 async function scraper(url) {
@@ -59,6 +59,22 @@ async function scraper(url) {
       let titulo = $(tabela).prevAll("h2, h3, strong").first().text().trim();
       if (!titulo) titulo = "Horário " + (i + 1);
 
+      const tituloLower = titulo.toLowerCase();
+
+      // 🔥 FILTRO FEDERAL PERFEITO
+      const isFederal = tituloLower.includes("federal");
+
+      const is10 = /1\s*(º|°)?\s*ao\s*10/.test(tituloLower) ||
+                   tituloLower.includes("10º") ||
+                   tituloLower.includes("10°");
+
+      const is5 = /1\s*(º|°)?\s*ao\s*5/.test(tituloLower) ||
+                  tituloLower.includes("5º") ||
+                  tituloLower.includes("5°");
+
+      // ❌ bloqueia tudo que não for 1 ao 5
+      if (isFederal && !is5) return;
+
       const nums = [];
 
       $(tabela).find("tr").each((i, tr) => {
@@ -66,19 +82,15 @@ async function scraper(url) {
         if (match) nums.push(match[0]);
       });
 
-      const tituloLower = titulo.toLowerCase();
-
-      const isFederal = tituloLower.includes("federal");
-      const is10 = tituloLower.includes("1 ao 10");
-
-      // remove federal duplicada
-      if (isFederal && is10) return;
-
       if (nums.length >= 5) {
+
+        // 🔥 garante só 5 prêmios
+        if (nums.length > 5) nums.length = 5;
+
         lista.push({
           horario: titulo
-            .replace(/1 ao 10º?/gi, "")
-            .replace(/1 ao 5º?/gi, "")
+            .replace(/1\s*(º|°)?\s*ao\s*10/gi, "")
+            .replace(/1\s*(º|°)?\s*ao\s*5/gi, "")
             .replace(/resultado do dia/gi, "")
             .trim(),
 
@@ -88,6 +100,7 @@ async function scraper(url) {
           p4: nums[3],
           p5: nums[4]
         });
+
       }
 
     });
@@ -101,7 +114,7 @@ async function scraper(url) {
 }
 
 //////////////////////////////////////////////////
-// 🏦 PEGAR DADOS
+// 🏦 PEGAR TODAS BANCAS
 //////////////////////////////////////////////////
 
 async function pegarTudo() {
@@ -125,6 +138,7 @@ async function salvarBanco(dados) {
 
     for (const item of dados[banca]) {
 
+      // 🔥 evita duplicado
       const existe = await Resultado.findOne({
         data: dataHoje,
         banca,
@@ -151,14 +165,14 @@ async function salvarBanco(dados) {
 }
 
 //////////////////////////////////////////////////
-// 📊 BUSCAR HISTÓRICO
+// 📊 HISTÓRICO ORGANIZADO
 //////////////////////////////////////////////////
 
 async function pegarHistorico() {
 
   const ultimos = await Resultado.find()
     .sort({ data: -1 })
-    .limit(300);
+    .limit(500);
 
   const agrupado = {};
 
