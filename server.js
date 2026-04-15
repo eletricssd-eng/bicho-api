@@ -11,6 +11,19 @@ const PORT = process.env.PORT || 3000;
 const HISTORICO_FILE = "./historico.json";
 
 //////////////////////////////////////////////////
+// 🔧 NORMALIZAR TEXTO (ANTI BUG)
+//////////////////////////////////////////////////
+
+function normalizarHorario(texto){
+  return texto
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/resultado do dia/gi, "")
+    .replace(/\d{2}\/\d{2}\/\d{4}/g, "")
+    .trim();
+}
+
+//////////////////////////////////////////////////
 // 🔍 SCRAPER
 //////////////////////////////////////////////////
 
@@ -43,29 +56,24 @@ async function scraper(url){
 
       $(tabela).find("tr").each((i,tr)=>{
         const texto = $(tr).text();
-
         const match = texto.match(/\d{4}/);
         if(match) nums.push(match[0]);
       });
 
-      // 🔥 FILTRO PRINCIPAL (AQUI ESTÁ A CORREÇÃO)
       const tituloLower = titulo.toLowerCase();
 
       const isFederal = tituloLower.includes("federal");
-
       const is10 = tituloLower.includes("1 ao 10") || tituloLower.includes("10º");
-      const is5  = tituloLower.includes("1 ao 5") || tituloLower.includes("5º");
 
-      // ❌ remove versão errada da federal
+      // ❌ remove federal errado
       if(isFederal && is10) return;
 
-      // ✅ garante só 1 ao 5
       if(nums.length >= 5){
-
         lista.push({
           horario: titulo
             .replace(/1 ao 10º?/gi, "")
             .replace(/1 ao 5º?/gi, "")
+            .replace(/resultado do dia/gi, "")
             .trim(),
 
           p1: nums[0],
@@ -74,7 +82,6 @@ async function scraper(url){
           p4: nums[3],
           p5: nums[4]
         });
-
       }
 
     });
@@ -100,14 +107,13 @@ async function pegarBancas(){
 }
 
 //////////////////////////////////////////////////
-// 🇧🇷 FEDERAL (CORRIGIDA)
+// 🇧🇷 FEDERAL
 //////////////////////////////////////////////////
 
 async function pegarFederal(){
   let lista = await scraper("https://www.resultadofacil.com.br/resultado-banca-federal");
 
-  // 🔥 FORÇA PADRÃO 1 AO 5 + LIMPA TEXTO
-  lista = lista.map(item => ({
+  return lista.map(item => ({
     horario: item.horario
       .replace(/1 ao 10º?/gi, "")
       .replace(/1 ao 5º?/gi, "")
@@ -120,8 +126,6 @@ async function pegarFederal(){
     p4: item.p4,
     p5: item.p5
   }));
-
-  return lista;
 }
 
 //////////////////////////////////////////////////
@@ -143,25 +147,9 @@ function salvarHistorico(dadosHoje){
 
   let historico = lerHistorico();
 
-  let dataBase = new Date().toISOString().split("T")[0];
+  // 🔥 data FIXA correta (sem bug)
+  const dataBase = new Date().toISOString().split("T")[0];
 
-  try{
-    const exemplo =
-      dadosHoje.rio?.[0]?.horario ||
-      dadosHoje.look?.[0]?.horario ||
-      dadosHoje.nacional?.[0]?.horario ||
-      dadosHoje.federal?.[0]?.horario;
-
-    const match = exemplo?.match(/\d{2}\/\d{2}\/\d{4}/);
-
-    if(match){
-      const [d,m,a] = match[0].split("/");
-      dataBase = `${a}-${m}-${d}`;
-    }
-
-  }catch{}
-
-  // 🔥 garante estrutura
   if(!historico[dataBase]){
     historico[dataBase] = {
       rio: [],
@@ -178,13 +166,26 @@ function salvarHistorico(dadosHoje){
     const novos = dadosHoje[banca] || [];
     const antigos = historico[dataBase][banca] || [];
 
-    // 🔥 remove duplicados por horário
     const mapa = {};
 
-    antigos.forEach(i => mapa[i.horario] = i);
-    novos.forEach(i => mapa[i.horario] = i);
+    antigos.forEach(i => {
+      const chave = normalizarHorario(i.horario);
+      mapa[chave] = i;
+    });
 
-    historico[dataBase][banca] = Object.values(mapa);
+    novos.forEach(i => {
+      const chave = normalizarHorario(i.horario);
+      mapa[chave] = i;
+    });
+
+    let resultadoFinal = Object.values(mapa);
+
+    // 🔥 federal só 1 resultado por dia
+    if(banca === "federal"){
+      resultadoFinal = resultadoFinal.slice(0,1);
+    }
+
+    historico[dataBase][banca] = resultadoFinal;
 
   });
 
