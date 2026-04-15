@@ -25,7 +25,7 @@ async function conectarMongo() {
 await conectarMongo();
 
 //////////////////////////////////////////////////
-// 📦 MODEL (COM UNIQUE)
+// 📦 MODEL (ANTI DUPLICAÇÃO)
 //////////////////////////////////////////////////
 
 const ResultadoSchema = new mongoose.Schema({
@@ -45,7 +45,7 @@ const ResultadoSchema = new mongoose.Schema({
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER (FEDERAL CORRIGIDA)
+// 🔍 SCRAPER (SEM DUPLICAÇÃO + FEDERAL CORRETA)
 //////////////////////////////////////////////////
 
 async function scraper(url) {
@@ -57,6 +57,8 @@ async function scraper(url) {
     const $ = cheerio.load(data);
     const lista = [];
 
+    const jaVistos = new Set(); // 🔥 anti duplicação
+
     $("table").each((i, tabela) => {
 
       let titulo = $(tabela).prevAll("h2, h3, strong").first().text().trim();
@@ -64,11 +66,18 @@ async function scraper(url) {
 
       const tituloLower = titulo.toLowerCase();
 
+      //////////////////////////////////////////////////
       // 🔥 FILTRO FEDERAL
+      //////////////////////////////////////////////////
+
       const isFederal = tituloLower.includes("federal");
       const is5 = /1\s*(º|°)?\s*ao\s*5/.test(tituloLower);
 
       if (isFederal && !is5) return;
+
+      //////////////////////////////////////////////////
+      // 🔢 PEGAR NÚMEROS
+      //////////////////////////////////////////////////
 
       const nums = [];
 
@@ -80,6 +89,16 @@ async function scraper(url) {
       if (nums.length >= 5) {
 
         const numeros = nums.slice(0, 5);
+
+        //////////////////////////////////////////////////
+        // 🔥 ANTI DUPLICAÇÃO NO SCRAPER
+        //////////////////////////////////////////////////
+
+        const assinatura = numeros.join("-");
+
+        if (jaVistos.has(assinatura)) return;
+
+        jaVistos.add(assinatura);
 
         lista.push({
           horario: titulo
@@ -121,7 +140,7 @@ async function pegarTudo() {
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR (ANTI DUPLICAÇÃO REAL)
+// 💾 SALVAR (ANTI DUPLICAÇÃO FINAL)
 //////////////////////////////////////////////////
 
 async function salvarBanco(dados) {
@@ -147,7 +166,7 @@ async function salvarBanco(dados) {
           p5: item.p5
         });
       } catch (err) {
-        // 🔥 ignora duplicado automaticamente
+        // ignora duplicado
         if (err.code !== 11000) {
           console.log("Erro ao salvar:", err.message);
         }
@@ -160,7 +179,7 @@ async function salvarBanco(dados) {
 }
 
 //////////////////////////////////////////////////
-// 📊 HISTÓRICO LIMPO
+// 📊 HISTÓRICO
 //////////////////////////////////////////////////
 
 async function pegarHistorico() {
