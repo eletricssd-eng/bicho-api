@@ -14,7 +14,7 @@ const PORT = process.env.PORT || 3000;
 const SECRET = process.env.JWT_SECRET || "segredo";
 
 //////////////////////////////////////////////////
-// 🔗 MONGO
+// 🔗 CONEXÃO MONGO
 //////////////////////////////////////////////////
 
 if (!process.env.MONGO_URI) {
@@ -23,7 +23,7 @@ if (!process.env.MONGO_URI) {
 }
 
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ Mongo conectado"))
+  .then(() => console.log("✅ MongoDB conectado"))
   .catch(err => {
     console.log("❌ erro Mongo:", err.message);
     process.exit(1);
@@ -33,7 +33,7 @@ mongoose.connect(process.env.MONGO_URI)
 // 📦 MODELS
 //////////////////////////////////////////////////
 
-const Resultado = mongoose.model("Resultado", new mongoose.Schema({
+const ResultadoSchema = new mongoose.Schema({
   uniqueId: { type: String, unique: true },
   data: String,
   banca: String,
@@ -43,110 +43,80 @@ const Resultado = mongoose.model("Resultado", new mongoose.Schema({
   p3: String,
   p4: String,
   p5: String
-}));
+});
 
-const User = mongoose.model("User", new mongoose.Schema({
+const Resultado = mongoose.model("Resultado", ResultadoSchema);
+
+const UserSchema = new mongoose.Schema({
   username: { type: String, unique: true },
   password: String
-}));
+});
+
+const User = mongoose.model("User", UserSchema);
 
 //////////////////////////////////////////////////
-// 🔐 AUTH (ACEITA BEARER)
+// 🔍 SCRAPER (CORRIGIDO)
 //////////////////////////////////////////////////
 
-function auth(req, res, next){
+async function scraper(url) {
+  try {
 
-  let token = req.headers.authorization;
-
-  if(!token){
-    return res.status(401).json({ erro: "Sem token" });
-  }
-
-  // 🔥 suporta "Bearer TOKEN"
-  if(token.startsWith("Bearer ")){
-    token = token.split(" ")[1];
-  }
-
-  try{
-    jwt.verify(token, SECRET);
-    next();
-  }catch{
-    return res.status(403).json({ erro: "Token inválido" });
-  }
-}
-
-//////////////////////////////////////////////////
-// 🔍 SCRAPER (ANTI DUPLICAÇÃO + FEDERAL FIX)
-//////////////////////////////////////////////////
-
-async function scraper(url){
-
-  try{
-
-    const { data } = await axios.get(url,{
-      headers:{ "User-Agent":"Mozilla/5.0" }
+    const { data } = await axios.get(url, {
+      headers: { "User-Agent": "Mozilla/5.0" }
     });
 
     const $ = cheerio.load(data);
     const lista = [];
     const jaVistos = new Set();
 
-    $("table").each((i, tabela)=>{
+    $("table").each((i, tabela) => {
 
-      let titulo = $(tabela)
-        .prevAll("h2, h3, strong")
-        .first()
-        .text()
-        .trim();
-
-      if(!titulo) titulo = "Horário "+(i+1);
+      let titulo = $(tabela).prevAll("h2, h3, strong").first().text().trim();
+      if (!titulo) titulo = "Horário " + (i + 1);
 
       const tituloLower = titulo.toLowerCase();
 
-      // 🔥 FEDERAL SOMENTE 1 AO 5
-      if(tituloLower.includes("federal")){
-        if(!/1\s*(º|°)?\s*ao\s*5/.test(tituloLower)){
-          return;
-        }
-      }
+      // 🔥 FEDERAL só 1 ao 5
+      const isFederal = tituloLower.includes("federal");
+      const is5 = /1\s*(º|°)?\s*ao\s*5/.test(tituloLower);
+
+      if (isFederal && !is5) return;
 
       const nums = [];
 
-      $(tabela).find("tr").each((i,tr)=>{
+      $(tabela).find("tr").each((i, tr) => {
         const match = $(tr).text().match(/\d{4}/);
-        if(match) nums.push(match[0]);
+        if (match) nums.push(match[0]);
       });
 
-      if(nums.length >= 5){
+      if (nums.length >= 5) {
 
-        const numeros = nums.slice(0,5);
+        const numeros = nums.slice(0, 5);
 
-        // 🔥 evita repetição
         const assinatura = numeros.join("-");
-        if(jaVistos.has(assinatura)) return;
+        if (jaVistos.has(assinatura)) return;
         jaVistos.add(assinatura);
 
         lista.push({
           horario: titulo
-            .replace(/1\s*(º|°)?\s*ao\s*10/gi,"")
-            .replace(/1\s*(º|°)?\s*ao\s*5/gi,"")
-            .replace(/resultado do dia/gi,"")
+            .replace(/1\s*(º|°)?\s*ao\s*10/gi, "")
+            .replace(/1\s*(º|°)?\s*ao\s*5/gi, "")
+            .replace(/resultado do dia/gi, "")
             .trim(),
 
-          p1:numeros[0],
-          p2:numeros[1],
-          p3:numeros[2],
-          p4:numeros[3],
-          p5:numeros[4]
+          p1: numeros[0],
+          p2: numeros[1],
+          p3: numeros[2],
+          p4: numeros[3],
+          p5: numeros[4]
         });
-
       }
 
     });
 
     return lista;
 
-  }catch{
+  } catch (e) {
     console.log("❌ erro scraper:", url);
     return [];
   }
@@ -156,8 +126,7 @@ async function scraper(url){
 // 🏦 PEGAR DADOS
 //////////////////////////////////////////////////
 
-async function pegarTudo(){
-
+async function pegarTudo() {
   return {
     rio: await scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
     look: await scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
@@ -167,73 +136,84 @@ async function pegarTudo(){
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR (SEM DUPLICAR)
+// 💾 SALVAR NO BANCO (SEM DUPLICAR)
 //////////////////////////////////////////////////
 
-async function salvarBanco(dados){
+async function salvarBanco(dados) {
 
   const dataHoje = new Date().toISOString().split("T")[0];
 
-  for(const banca in dados){
+  for (const banca in dados) {
 
-    for(const item of dados[banca]){
+    for (const item of dados[banca]) {
 
-      const uniqueId =
-        `${dataHoje}-${banca}-${item.p1}-${item.p2}-${item.p3}-${item.p4}-${item.p5}`;
+      const uniqueId = `${dataHoje}-${banca}-${item.p1}-${item.p2}-${item.p3}-${item.p4}-${item.p5}`;
 
-      await Resultado.updateOne(
-        { uniqueId },
-        {
-          $set:{
-            data:dataHoje,
-            banca,
-            horario:item.horario,
-            p1:item.p1,
-            p2:item.p2,
-            p3:item.p3,
-            p4:item.p4,
-            p5:item.p5
-          }
-        },
-        { upsert:true }
-      );
+      try {
+
+        await Resultado.updateOne(
+          { uniqueId },
+          {
+            $set: {
+              data: dataHoje,
+              banca,
+              horario: item.horario,
+              p1: item.p1,
+              p2: item.p2,
+              p3: item.p3,
+              p4: item.p4,
+              p5: item.p5
+            }
+          },
+          { upsert: true }
+        );
+
+        console.log("💾 SALVO:", uniqueId);
+
+      } catch (err) {
+        console.log("❌ erro salvar:", err.message);
+      }
 
     }
 
   }
+
 }
 
 //////////////////////////////////////////////////
-// 📊 HISTÓRICO LIMPO
+// 📊 HISTÓRICO
 //////////////////////////////////////////////////
 
-async function pegarHistorico(){
+async function pegarHistorico() {
 
-  const dados = await Resultado.find()
-    .sort({ data:-1 })
+  const ultimos = await Resultado.find()
+    .sort({ data: -1, horario: 1 })
     .limit(500);
 
   const agrupado = {};
 
-  dados.forEach(r=>{
+  ultimos.forEach(r => {
 
-    if(!agrupado[r.data]){
+    if (!agrupado[r.data]) {
       agrupado[r.data] = {
-        rio:[], look:[], nacional:[], federal:[]
+        rio: [],
+        look: [],
+        nacional: [],
+        federal: []
       };
     }
 
     const existe = agrupado[r.data][r.banca]
       .some(i => i.p1 === r.p1 && i.horario === r.horario);
 
-    if(!existe){
+    if (!existe) {
       agrupado[r.data][r.banca].push({
-        horario:r.horario,
-        p1:r.p1,
-        p2:r.p2,
-        p3:r.p3,
-        p4:r.p4,
-        p5:r.p5
+        horario: r.horario,
+        p1: r.p1,
+        p2: r.p2,
+        p3: r.p3,
+        p4: r.p4,
+        p5: r.p5
       });
     }
 
@@ -243,100 +223,92 @@ async function pegarHistorico(){
 }
 
 //////////////////////////////////////////////////
-// ⚡ CACHE (DEIXA RÁPIDO)
-//////////////////////////////////////////////////
-
-let cache = null;
-let tempo = 0;
-
-async function carregarTudo(){
-
-  const agora = Date.now();
-
-  if(cache && (agora - tempo < 60000)){
-    return cache;
-  }
-
-  const dados = await pegarTudo();
-
-  await salvarBanco(dados);
-
-  const historico = await pegarHistorico();
-
-  cache = {
-    atualizado: new Date().toLocaleString(),
-    historico
-  };
-
-  tempo = agora;
-
-  return cache;
-}
-
-//////////////////////////////////////////////////
 // 🔐 LOGIN
 //////////////////////////////////////////////////
 
-app.post("/login", async (req,res)=>{
+app.post("/login", async (req, res) => {
 
   const { username, password } = req.body;
 
   const user = await User.findOne({ username });
 
-  if(!user){
-    return res.status(400).json({ erro:"Usuário não encontrado" });
-  }
+  if (!user) return res.status(400).json({ erro: "Usuário não encontrado" });
 
   const ok = await bcrypt.compare(password, user.password);
 
-  if(!ok){
-    return res.status(400).json({ erro:"Senha inválida" });
-  }
+  if (!ok) return res.status(400).json({ erro: "Senha inválida" });
 
-  const token = jwt.sign({ id:user._id }, SECRET, { expiresIn:"7d" });
+  const token = jwt.sign({ id: user._id }, SECRET, {
+    expiresIn: "7d"
+  });
 
   res.json({ token });
 });
 
 //////////////////////////////////////////////////
-// 👤 CRIAR USER (USAR UMA VEZ)
+// 👤 CRIAR USER (usar 1x)
 //////////////////////////////////////////////////
 
-app.get("/criar-user", async (req,res)=>{
+app.get("/criar-user", async (req, res) => {
 
-  const hash = await bcrypt.hash("1234",10);
+  const existe = await User.findOne({ username: "admin" });
+
+  if (existe) return res.send("Já existe");
+
+  const hash = await bcrypt.hash("1234", 10);
 
   await User.create({
-    username:"admin",
-    password:hash
+    username: "admin",
+    password: hash
   });
 
-  res.send("Usuário criado");
+  res.send("Usuário criado: admin / 1234");
 });
 
 //////////////////////////////////////////////////
-// 🚀 ROTA PROTEGIDA
+// 🚀 ROTA PRINCIPAL (SEM AUTH)
 //////////////////////////////////////////////////
 
-app.get("/resultados", auth, async (req,res)=>{
+app.get("/resultados", async (req, res) => {
 
-  try{
+  try {
 
-    const dados = await carregarTudo();
+    const dados = await pegarTudo();
 
-    res.json(dados);
+    console.log("📊 DADOS:", Object.keys(dados));
 
-  }catch(err){
-    console.log("❌ erro:", err.message);
-    res.status(500).json({ erro:"Erro servidor" });
+    await salvarBanco(dados);
+
+    const historico = await pegarHistorico();
+
+    res.json({
+      atualizado: new Date().toLocaleString(),
+      historico
+    });
+
+  } catch (err) {
+    console.log("❌ erro rota:", err.message);
+    res.status(500).json({ erro: "Erro no servidor" });
   }
 
 });
 
 //////////////////////////////////////////////////
+// 🔄 AUTO ATUALIZAÇÃO
+//////////////////////////////////////////////////
+
+setInterval(async () => {
+  console.log("⏳ Atualizando automático...");
+
+  const dados = await pegarTudo();
+  await salvarBanco(dados);
+
+}, 5 * 60 * 1000);
+
+//////////////////////////////////////////////////
 // 🚀 START
 //////////////////////////////////////////////////
 
-app.listen(PORT, ()=>{
-  console.log("🚀 Rodando na porta", PORT);
+app.listen(PORT, () => {
+  console.log("🚀 Server rodando na porta", PORT);
 });
