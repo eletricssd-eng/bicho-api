@@ -3,11 +3,15 @@ import axios from "axios";
 import cors from "cors";
 import * as cheerio from "cheerio";
 import mongoose from "mongoose";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 
 const app = express();
 app.use(cors());
+app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+const SECRET = process.env.JWT_SECRET || "segredo";
 
 //////////////////////////////////////////////////
 // 🔥 VERIFICA MONGO
@@ -19,31 +23,25 @@ if (!process.env.MONGO_URI) {
 }
 
 //////////////////////////////////////////////////
-// 🔗 CONEXÃO MONGODB (SEM AWAIT)
+// 🔗 CONEXÃO MONGODB
 //////////////////////////////////////////////////
 
-function conectarMongo() {
-  mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log("✅ MongoDB conectado"))
-    .catch(err => {
-      console.log("❌ erro Mongo:", err.message);
-      process.exit(1);
-    });
-}
-
-conectarMongo();
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log("✅ MongoDB conectado"))
+  .catch(err => {
+    console.log("❌ erro Mongo:", err.message);
+    process.exit(1);
+  });
 
 //////////////////////////////////////////////////
-// 📦 MODEL
+// 📦 MODELS
 //////////////////////////////////////////////////
 
 const ResultadoSchema = new mongoose.Schema({
   uniqueId: { type: String, unique: true },
-
   data: String,
   banca: String,
   horario: String,
-
   p1: String,
   p2: String,
   p3: String,
@@ -53,19 +51,44 @@ const ResultadoSchema = new mongoose.Schema({
 
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
+const UserSchema = new mongoose.Schema({
+  username: { type: String, unique: true },
+  password: String
+});
+
+const User = mongoose.model("User", UserSchema);
+
 //////////////////////////////////////////////////
-// 🔍 SCRAPER (SEM DUPLICAÇÃO + FEDERAL CORRETA)
+// 🔐 MIDDLEWARE AUTH
+//////////////////////////////////////////////////
+
+function auth(req, res, next) {
+
+  const token = req.headers.authorization;
+
+  if (!token) return res.status(401).json({ erro: "Sem token" });
+
+  try {
+    jwt.verify(token, SECRET);
+    next();
+  } catch {
+    return res.status(403).json({ erro: "Token inválido" });
+  }
+}
+
+//////////////////////////////////////////////////
+// 🔍 SCRAPER (CORRIGIDO)
 //////////////////////////////////////////////////
 
 async function scraper(url) {
   try {
+
     const { data } = await axios.get(url, {
       headers: { "User-Agent": "Mozilla/5.0" }
     });
 
     const $ = cheerio.load(data);
     const lista = [];
-
     const jaVistos = new Set();
 
     $("table").each((i, tabela) => {
@@ -75,7 +98,7 @@ async function scraper(url) {
 
       const tituloLower = titulo.toLowerCase();
 
-      // 🔥 FEDERAL: só 1 ao 5
+      // 🔥 FEDERAL só 1 ao 5
       const isFederal = tituloLower.includes("federal");
       const is5 = /1\s*(º|°)?\s*ao\s*5/.test(tituloLower);
 
@@ -92,7 +115,6 @@ async function scraper(url) {
 
         const numeros = nums.slice(0, 5);
 
-        // 🔥 evita duplicado do site
         const assinatura = numeros.join("-");
         if (jaVistos.has(assinatura)) return;
         jaVistos.add(assinatura);
@@ -110,7 +132,6 @@ async function scraper(url) {
           p4: numeros[3],
           p5: numeros[4]
         });
-
       }
 
     });
@@ -137,7 +158,7 @@ async function pegarTudo() {
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR NO BANCO (ANTI DUPLICAÇÃO)
+// 💾 SALVAR (SEM DUPLICAR)
 //////////////////////////////////////////////////
 
 async function salvarBanco(dados) {
@@ -151,37 +172,39 @@ async function salvarBanco(dados) {
       const uniqueId = `${dataHoje}-${banca}-${item.p1}-${item.p2}-${item.p3}-${item.p4}-${item.p5}`;
 
       try {
-        await Resultado.create({
-          uniqueId,
-          data: dataHoje,
-          banca,
-          horario: item.horario,
-          p1: item.p1,
-          p2: item.p2,
-          p3: item.p3,
-          p4: item.p4,
-          p5: item.p5
-        });
+        await Resultado.updateOne(
+          { uniqueId },
+          {
+            $set: {
+              data: dataHoje,
+              banca,
+              horario: item.horario,
+              p1: item.p1,
+              p2: item.p2,
+              p3: item.p3,
+              p4: item.p4,
+              p5: item.p5
+            }
+          },
+          { upsert: true }
+        );
       } catch (err) {
-        if (err.code !== 11000) {
-          console.log("Erro ao salvar:", err.message);
-        }
+        console.log("Erro salvar:", err.message);
       }
 
     }
 
   }
-
 }
 
 //////////////////////////////////////////////////
-// 📊 HISTÓRICO
+// 📊 HISTÓRICO (SEM REPETIÇÃO)
 //////////////////////////////////////////////////
 
 async function pegarHistorico() {
 
   const ultimos = await Resultado.find()
-    .sort({ data: -1 })
+    .sort({ data: -1, horario: 1 })
     .limit(500);
 
   const agrupado = {};
@@ -197,14 +220,20 @@ async function pegarHistorico() {
       };
     }
 
-    agrupado[r.data][r.banca].push({
-      horario: r.horario,
-      p1: r.p1,
-      p2: r.p2,
-      p3: r.p3,
-      p4: r.p4,
-      p5: r.p5
-    });
+    // 🔥 evita duplicar no retorno
+    const existe = agrupado[r.data][r.banca]
+      .some(i => i.p1 === r.p1 && i.horario === r.horario);
+
+    if (!existe) {
+      agrupado[r.data][r.banca].push({
+        horario: r.horario,
+        p1: r.p1,
+        p2: r.p2,
+        p3: r.p3,
+        p4: r.p4,
+        p5: r.p5
+      });
+    }
 
   });
 
@@ -212,10 +241,53 @@ async function pegarHistorico() {
 }
 
 //////////////////////////////////////////////////
-// 🚀 ROTA
+// 🔐 LOGIN
 //////////////////////////////////////////////////
 
-app.get("/resultados", async (req, res) => {
+app.post("/login", async (req, res) => {
+
+  const { username, password } = req.body;
+
+  const user = await User.findOne({ username });
+
+  if (!user) {
+    return res.status(400).json({ erro: "Usuário não encontrado" });
+  }
+
+  const ok = await bcrypt.compare(password, user.password);
+
+  if (!ok) {
+    return res.status(400).json({ erro: "Senha inválida" });
+  }
+
+  const token = jwt.sign({ id: user._id }, SECRET, {
+    expiresIn: "7d"
+  });
+
+  res.json({ token });
+});
+
+//////////////////////////////////////////////////
+// 👤 CRIAR USUÁRIO (usar 1x e apagar depois)
+//////////////////////////////////////////////////
+
+app.get("/criar-user", async (req, res) => {
+
+  const hash = await bcrypt.hash("1234", 10);
+
+  await User.create({
+    username: "admin",
+    password: hash
+  });
+
+  res.send("Usuário criado");
+});
+
+//////////////////////////////////////////////////
+// 🚀 ROTA PROTEGIDA
+//////////////////////////////////////////////////
+
+app.get("/resultados", auth, async (req, res) => {
 
   try {
 
