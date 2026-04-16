@@ -244,6 +244,18 @@ app.post("/login", async (req, res) => {
 
   res.json({ token });
 });
+app.post("/register", async (req,res)=>{
+  const { username, password } = req.body;
+
+  const hash = await bcrypt.hash(password, 10);
+
+  await User.create({
+    username,
+    password: hash
+  });
+
+  res.json({ ok:true });
+});
 
 //////////////////////////////////////////////////
 // 👤 CRIAR USER (usar 1x)
