@@ -13,6 +13,16 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const SECRET = process.env.JWT_SECRET || "segredo";
 
+function getDataAtual(){
+  const agora = new Date();
+
+  const ano = agora.getFullYear();
+  const mes = String(agora.getMonth()+1).padStart(2,"0");
+  const dia = String(agora.getDate()).padStart(2,"0");
+
+  return `${ano}-${mes}-${dia}`;
+}
+
 //////////////////////////////////////////////////
 // 🔗 MONGO
 //////////////////////////////////////////////////
@@ -119,12 +129,12 @@ async function scraper(url) {
 //////////////////////////////////////////////////
 
 function limparHorario(texto) {
-  return texto
-    .replace(/1\s*(º|°)?\s*ao\s*10/gi, "")
-    .replace(/1\s*(º|°)?\s*ao\s*5/gi, "")
-    .replace(/resultado do dia/gi, "")
-    .trim()
-    .match(/\d{2}/)?.[0] || texto;
+
+  const match = texto.match(/\d{2}:\d{2}|\d{2}h|\d{2}/);
+
+  if(!match) return texto;
+
+  return match[0].replace("h",":00");
 }
 
 //////////////////////////////////////////////////
@@ -146,7 +156,7 @@ async function pegarTudo() {
 
 async function salvarBanco(dados) {
 
-  const dataHoje = new Date().toISOString().split("T")[0];
+  const dataHoje = getDataAtual();
   const jaSalvos = new Set();
 
   for (const banca in dados) {
