@@ -150,7 +150,7 @@ function normalizarHorario(h) {
 
 async function salvarBanco(dados) {
 
-  const dataHoje = new Date().toISOString().split("T")[0];
+  const dataPadrao = new Date().toISOString().split("T")[0];
   const jaSalvos = new Set();
 
   for (const banca in dados) {
@@ -160,38 +160,31 @@ async function salvarBanco(dados) {
       if (!item) continue;
 
       const hora = normalizarHorario(item.horario || "");
+      const dataFinal = item.data || dataPadrao;
 
       const chave = `${banca}-${hora}-${item.p1}-${item.p2}-${item.p3}-${item.p4}-${item.p5}`;
 
       if (jaSalvos.has(chave)) continue;
       jaSalvos.add(chave);
 
-      const uniqueId = `${dataHoje}-${chave}`;
+      const uniqueId = `${dataFinal}-${chave}`;
 
-      try {
-
-        await Resultado.updateOne(
-          { uniqueId },
-          {
-            $set: {
-              data: dataHoje,
-              banca,
-              horario: hora,
-              p1: item.p1 || "",
-              p2: item.p2 || "",
-              p3: item.p3 || "",
-              p4: item.p4 || "",
-              p5: item.p5 || ""
-            }
-          },
-          { upsert: true }
-        );
-
-        console.log("💾 SALVO:", uniqueId);
-
-      } catch (err) {
-        console.log("❌ erro salvar:", err.message);
-      }
+      await Resultado.updateOne(
+        { uniqueId },
+        {
+          $set: {
+            data: dataFinal,
+            banca,
+            horario: hora,
+            p1: item.p1,
+            p2: item.p2,
+            p3: item.p3,
+            p4: item.p4,
+            p5: item.p5
+          }
+        },
+        { upsert: true }
+      );
 
     }
 
