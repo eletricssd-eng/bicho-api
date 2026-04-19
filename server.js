@@ -163,6 +163,34 @@ function removerDuplicados(lista) {
 
   return Array.from(mapa.values());
 }
+function converterParaListaSimples(historico) {
+  const lista = [];
+
+  Object.keys(historico).forEach(dataISO => {
+    const bancas = historico[dataISO];
+
+    // converter data: 2026-04-19 → 19/04/2026
+    const [ano, mes, dia] = dataISO.split("-");
+    const dataBR = `${dia}/${mes}/${ano}`;
+
+    Object.keys(bancas).forEach(banca => {
+      bancas[banca].forEach(item => {
+        lista.push({
+          data: dataBR,
+          banca: banca,
+          horario: item.horario,
+          p1: item.p1,
+          p2: item.p2,
+          p3: item.p3,
+          p4: item.p4,
+          p5: item.p5
+        });
+      });
+    });
+  });
+
+  return lista;
+}
 
 async function salvarBanco(dados) {
 
