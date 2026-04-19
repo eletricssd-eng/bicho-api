@@ -30,7 +30,7 @@ mongoose.connect(process.env.MONGO_URI)
   });
 
 //////////////////////////////////////////////////
-// 📦 MODEL
+// 📦 MODELS
 //////////////////////////////////////////////////
 
 const ResultadoSchema = new mongoose.Schema({
@@ -47,36 +47,19 @@ const ResultadoSchema = new mongoose.Schema({
 
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
-//////////////////////////////////////////////////
-// 🔧 FUNÇÕES
-//////////////////////////////////////////////////
+const UserSchema = new mongoose.Schema({
+  username: { type: String, unique: true },
+  password: String
+});
 
-function normalizarHorario(h) {
-  const match = h.match(/\b(\d{2})[:h]?/);
-  return match ? match[1] : "00";
-}
-
-function pegarDataHoje() {
-  return new Date().toISOString().split("T")[0];
-}
-
-// 🔥 extrai data do texto (principalmente federal)
-function extrairData(texto) {
-  const match = texto.match(/(\d{2}\/\d{2}\/\d{4})/);
-  if (match) {
-    const [dia, mes, ano] = match[1].split("/");
-    return `${ano}-${mes}-${dia}`;
-  }
-  return pegarDataHoje();
-}
+const User = mongoose.model("User", UserSchema);
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER (AJUSTADO)
+// 🔍 SCRAPER UNIFICADO
 //////////////////////////////////////////////////
 
-async function scraper(url, bancaNome) {
+async function scraper(url) {
   try {
-
     const { data } = await axios.get(url, {
       headers: { "User-Agent": "Mozilla/5.0" }
     });
@@ -88,7 +71,14 @@ async function scraper(url, bancaNome) {
     $("table").each((i, tabela) => {
 
       let titulo = $(tabela).prevAll("h2, h3, strong").first().text().trim();
-      if (!titulo) return;
+      if (!titulo) titulo = "Horário " + (i + 1);
+
+      const tituloLower = titulo.toLowerCase();
+
+      const isFederal = tituloLower.includes("federal");
+      const is10 = tituloLower.includes("1 ao 10");
+
+      if (isFederal && is10) return;
 
       const nums = [];
 
@@ -99,25 +89,19 @@ async function scraper(url, bancaNome) {
 
       if (nums.length >= 5) {
 
-        const p = nums.slice(0, 5);
+        const numeros = nums.slice(0, 5);
 
-        const horario = normalizarHorario(titulo);
-        const dataExtraida = extrairData(titulo);
-
-        const chave = `${bancaNome}-${dataExtraida}-${horario}-${p.join("-")}`;
-
+        const chave = numeros.join("-");
         if (vistos.has(chave)) return;
         vistos.add(chave);
 
         lista.push({
-          banca: bancaNome,
-          data: dataExtraida,
-          horario,
-          p1: p[0],
-          p2: p[1],
-          p3: p[2],
-          p4: p[3],
-          p5: p[4]
+          horario: limparHorario(titulo),
+          p1: numeros[0],
+          p2: numeros[1],
+          p3: numeros[2],
+          p4: numeros[3],
+          p5: numeros[4]
         });
       }
 
@@ -125,10 +109,22 @@ async function scraper(url, bancaNome) {
 
     return lista;
 
-  } catch (e) {
-    console.log("❌ erro scraper:", url);
+  } catch {
     return [];
   }
+}
+
+//////////////////////////////////////////////////
+// 🧹 LIMPAR HORÁRIO
+//////////////////////////////////////////////////
+
+function limparHorario(texto) {
+  return texto
+    .replace(/1\s*(º|°)?\s*ao\s*10/gi, "")
+    .replace(/1\s*(º|°)?\s*ao\s*5/gi, "")
+    .replace(/resultado do dia/gi, "")
+    .trim()
+    .match(/\d{2}/)?.[0] || texto;
 }
 
 //////////////////////////////////////////////////
@@ -136,43 +132,64 @@ async function scraper(url, bancaNome) {
 //////////////////////////////////////////////////
 
 async function pegarTudo() {
-  return [
-    ...(await scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje", "rio")),
-    ...(await scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje", "look")),
-    ...(await scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje", "nacional")),
-    ...(await scraper("https://www.resultadofacil.com.br/resultado-banca-federal", "federal"))
-  ];
+  return {
+    rio: await scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
+    look: await scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
+    nacional: await scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje"),
+    federal: await scraper("https://www.resultadofacil.com.br/resultado-banca-federal")
+  };
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR
+// 💾 SALVAR (SEM DUPLICAR)
 //////////////////////////////////////////////////
 
-async function salvarBanco(lista) {
+async function salvarBanco(dados) {
 
-  for (const item of lista) {
+  const dataHoje = new Date().toISOString().split("T")[0];
+  const jaSalvos = new Set();
 
-    const uniqueId = `${item.data}-${item.banca}-${item.horario}-${item.p1}-${item.p2}-${item.p3}-${item.p4}-${item.p5}`;
+  for (const banca in dados) {
 
-    await Resultado.updateOne(
-      { uniqueId },
-      {
-        $set: item
-      },
-      { upsert: true }
-    );
+    for (const item of dados[banca]) {
+
+      const chave = `${banca}-${item.horario}-${item.p1}-${item.p2}-${item.p3}-${item.p4}-${item.p5}`;
+
+      if (jaSalvos.has(chave)) continue;
+      jaSalvos.add(chave);
+
+      const uniqueId = `${dataHoje}-${chave}`;
+
+      await Resultado.updateOne(
+        { uniqueId },
+        {
+          $set: {
+            data: dataHoje,
+            banca,
+            horario: item.horario,
+            p1: item.p1,
+            p2: item.p2,
+            p3: item.p3,
+            p4: item.p4,
+            p5: item.p5
+          }
+        },
+        { upsert: true }
+      );
+
+    }
   }
-
 }
 
 //////////////////////////////////////////////////
-// 📊 HISTÓRICO ORGANIZADO
+// 📊 HISTÓRICO
 //////////////////////////////////////////////////
 
 async function pegarHistorico() {
 
   const dados = await Resultado.find()
-    .sort({ data: -1, horario: 1 });
+    .sort({ data: -1, horario: 1 })
+    .limit(1000);
 
   const agrupado = {};
 
@@ -187,14 +204,22 @@ async function pegarHistorico() {
       };
     }
 
-    agrupado[r.data][r.banca].push({
-      horario: r.horario,
-      p1: r.p1,
-      p2: r.p2,
-      p3: r.p3,
-      p4: r.p4,
-      p5: r.p5
-    });
+    const lista = agrupado[r.data][r.banca];
+
+    const existe = lista.some(i =>
+      i.horario === r.horario && i.p1 === r.p1
+    );
+
+    if (!existe) {
+      lista.push({
+        horario: r.horario,
+        p1: r.p1,
+        p2: r.p2,
+        p3: r.p3,
+        p4: r.p4,
+        p5: r.p5
+      });
+    }
 
   });
 
@@ -202,16 +227,46 @@ async function pegarHistorico() {
 }
 
 //////////////////////////////////////////////////
-// 🚀 ROTAS
+// 🔐 LOGIN
+//////////////////////////////////////////////////
+
+app.post("/register", async (req, res) => {
+  const { username, password } = req.body;
+
+  const hash = await bcrypt.hash(password, 10);
+
+  await User.create({ username, password: hash });
+
+  res.json({ ok: true });
+});
+
+app.post("/login", async (req, res) => {
+  const { username, password } = req.body;
+
+  const user = await User.findOne({ username });
+  if (!user) return res.status(400).json({ erro: "Usuário não existe" });
+
+  const ok = await bcrypt.compare(password, user.password);
+  if (!ok) return res.status(400).json({ erro: "Senha inválida" });
+
+  const token = jwt.sign({ id: user._id }, SECRET, {
+    expiresIn: "7d"
+  });
+
+  res.json({ token });
+});
+
+//////////////////////////////////////////////////
+// 🌐 ROTA PRINCIPAL
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req, res) => {
 
   try {
 
-    const lista = await pegarTudo();
+    const dados = await pegarTudo();
 
-    await salvarBanco(lista);
+    await salvarBanco(dados);
 
     const historico = await pegarHistorico();
 
@@ -221,8 +276,7 @@ app.get("/resultados", async (req, res) => {
     });
 
   } catch (err) {
-    console.log("❌ erro:", err.message);
-    res.status(500).json({ erro: "Erro servidor" });
+    res.status(500).json({ erro: "Erro no servidor" });
   }
 
 });
@@ -232,11 +286,8 @@ app.get("/resultados", async (req, res) => {
 //////////////////////////////////////////////////
 
 setInterval(async () => {
-  console.log("⏳ Atualizando...");
-
-  const lista = await pegarTudo();
-  await salvarBanco(lista);
-
+  const dados = await pegarTudo();
+  await salvarBanco(dados);
 }, 5 * 60 * 1000);
 
 //////////////////////////////////////////////////
@@ -244,5 +295,5 @@ setInterval(async () => {
 //////////////////////////////////////////////////
 
 app.listen(PORT, () => {
-  console.log("🚀 Rodando porta", PORT);
+  console.log("🚀 API rodando na porta", PORT);
 });
