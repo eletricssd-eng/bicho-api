@@ -140,12 +140,28 @@ async function pegarTudo() {
 //////////////////////////////////////////////////
 
 function normalizarHorario(h) {
-  if (!h) return "00";
+  // pega apenas hora tipo 09, 11, 14...
+  const match = h.match(/\b(\d{2})[:h]?/);
+  return match ? match[1] : h;
+}
 
-  const match = h.match(/\d{1,2}/);
-  if (!match) return "00";
+function removerDuplicados(lista) {
+  const mapa = new Map();
 
-  return match[0].padStart(2, "0");
+  lista.forEach(item => {
+    const horario = normalizarHorario(item.horario);
+
+    const chave = `${horario}-${item.p1}-${item.p2}-${item.p3}-${item.p4}-${item.p5}`;
+
+    if (!mapa.has(chave)) {
+      mapa.set(chave, {
+        ...item,
+        horario // salva só horário limpo
+      });
+    }
+  });
+
+  return Array.from(mapa.values());
 }
 
 async function salvarBanco(dados) {
@@ -336,34 +352,6 @@ function normalizarResultados(historico) {
   return resultadoFinal;
 }
 
-//////////////////////////////////////////////////
-//     NORMALIZAR HORARIO
-//////////////////////////////////////////////////
-
-function normalizarHorario(h) {
-  // pega apenas hora tipo 09, 11, 14...
-  const match = h.match(/\b(\d{2})[:h]?/);
-  return match ? match[1] : h;
-}
-
-function removerDuplicados(lista) {
-  const mapa = new Map();
-
-  lista.forEach(item => {
-    const horario = normalizarHorario(item.horario);
-
-    const chave = `${horario}-${item.p1}-${item.p2}-${item.p3}-${item.p4}-${item.p5}`;
-
-    if (!mapa.has(chave)) {
-      mapa.set(chave, {
-        ...item,
-        horario // salva só horário limpo
-      });
-    }
-  });
-
-  return Array.from(mapa.values());
-}
 
 //////////////////////////////////////////////////
 // 🔐 LOGIN
