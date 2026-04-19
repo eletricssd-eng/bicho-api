@@ -139,6 +139,13 @@ async function pegarTudo() {
 // 💾 SALVAR NO BANCO (SEM DUPLICAR)
 //////////////////////////////////////////////////
 
+function normalizzarHorario(h) {
+if (!h) return "00";
+const match = h.match(/\d{1,2}/);
+if (!match) return "00";
+return match[0].padStart(2, "0");
+}
+
 async function salvarBanco(dados) {
 
   const dataHoje = new Date().toISOString().split("T")[0];
@@ -146,8 +153,9 @@ async function salvarBanco(dados) {
   for (const banca in dados) {
 
     for (const item of dados[banca]) {
+      const hora = normalizarHorario(item.horario);
 
-      const uniqueId = `${dataHoje}-${banca}-${item.p1}-${item.p2}-${item.p3}-${item.p4}-${item.p5}`;
+      const uniqueId = `${dataHoje}-${banca}-${hora}-${item.p1}-${item.p2}-${item.p3}-${item.p4}-${item.p5}`;
 
       try {
 
@@ -157,7 +165,7 @@ async function salvarBanco(dados) {
             $set: {
               data: dataHoje,
               banca,
-              horario: item.horario,
+              horario: hora,
               p1: item.p1,
               p2: item.p2,
               p3: item.p3,
