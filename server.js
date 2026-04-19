@@ -193,6 +193,49 @@ async function salvarBanco(dados) {
 }
 
 //////////////////////////////////////////////////
+//        ORGANIZAR RESULTADOS
+//////////////////////////////////////////////////
+
+function organizarResultados(dados) {
+  const lista = [];
+
+  Object.keys(dados.historico).forEach(data => {
+    const bancas = dados.historico[data];
+
+    Object.keys(bancas).forEach(banca => {
+      bancas[banca].forEach(r => {
+
+        // pegar só registros completos
+        if (r.horario.includes("-")) {
+
+          const partes = r.horario.split(",");
+
+          let horario = partes[2]?.trim(); // 09:20
+          let tipoParte = partes[3]?.split("-")[0]?.trim(); // PT
+
+          let dataParte = r.horario.split("-")[1]?.trim(); // data completa
+
+          lista.push({
+            banca,
+            horario,
+            tipo: tipoParte,
+            data: dataParte,
+            p1: r.p1,
+            p2: r.p2,
+            p3: r.p3,
+            p4: r.p4,
+            p5: r.p5
+          });
+        }
+
+      });
+    });
+  });
+
+  return lista;
+}
+
+//////////////////////////////////////////////////
 // 📊 HISTÓRICO
 //////////////////////////////////////////////////
 
