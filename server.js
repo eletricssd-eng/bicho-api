@@ -2,77 +2,148 @@ import express from "express";
 import axios from "axios";
 import cors from "cors";
 import * as cheerio from "cheerio";
-import fs from "fs";
+import mongoose from "mongoose";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 
 const app = express();
 app.use(cors());
+app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const HISTORICO_FILE = "./historico.json";
+const SECRET = process.env.JWT_SECRET || "segredo";
+
+//////////////////////////////////////////////////
+// 🔗 MONGO
+//////////////////////////////////////////////////
+
+if (!process.env.MONGO_URI) {
+  console.log("❌ MONGO_URI não definida");
+  process.exit(1);
+}
+
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log("✅ Mongo conectado"))
+  .catch(err => {
+    console.log("❌ erro mongo:", err.message);
+    process.exit(1);
+  });
+
+//////////////////////////////////////////////////
+// 📦 MODELS
+//////////////////////////////////////////////////
+
+const ResultadoSchema = new mongoose.Schema({
+  uniqueId: { type: String, unique: true },
+  data: String,
+  banca: String,
+  horario: String,
+  p1: String,
+  p2: String,
+  p3: String,
+  p4: String,
+  p5: String
+});
+
+const Resultado = mongoose.model("Resultado", ResultadoSchema);
+
+const UserSchema = new mongoose.Schema({
+  username: { type: String, unique: true },
+  password: String
+});
+
+const User = mongoose.model("User", UserSchema);
+
+//////////////////////////////////////////////////
+// 🧠 HORÁRIOS REAIS
+//////////////////////////////////////////////////
+
+const HORARIOS = {
+  rio: ["09:20","11:00","14:20","16:00","21:20"],
+  look: ["07:00","09:00","11:00","14:00","16:00","18:00","21:00","23:00"],
+  nacional: ["02:00","08:00","10:00","12:00","15:00","17:00","20:00","23:00"],
+  federal: ["19:00"]
+};
+
+//////////////////////////////////////////////////
+// 📅 EXTRAIR DATA DO TEXTO
+//////////////////////////////////////////////////
+
+function extrairData(texto){
+
+  const match = texto.match(/\d{2}\/\d{2}\/\d{4}/);
+
+  if(match){
+    const [d,m,a] = match[0].split("/");
+    return `${a}-${m}-${d}`;
+  }
+
+  return new Date().toISOString().split("T")[0];
+}
 
 //////////////////////////////////////////////////
 // 🔍 SCRAPER
 //////////////////////////////////////////////////
 
-async function scraper(url){
-  try{
+async function scraper(url, banca) {
+
+  try {
+
     const { data } = await axios.get(url, {
       headers: { "User-Agent": "Mozilla/5.0" }
     });
 
     const $ = cheerio.load(data);
     const lista = [];
+    const vistos = new Set();
 
-    const tabelas = $("table");
+    $("table").each((i, tabela) => {
 
-    tabelas.each((i, tabela)=>{
+      let titulo = $(tabela).prevAll("h2, h3, strong").first().text().trim();
+      if (!titulo) titulo = "Horário " + (i + 1);
 
-      let titulo = "";
-
-      const prev = $(tabela).prevAll("h2, h3, strong").first();
-
-      if(prev.length){
-        titulo = prev.text().trim();
-      }
-
-      if(!titulo || titulo.length < 5){
-        titulo = "Horário " + (i+1);
-      }
-
-      const nums = [];
-
-      $(tabela).find("tr").each((i,tr)=>{
-        const texto = $(tr).text();
-
-        const match = texto.match(/\d{4}/);
-        if(match) nums.push(match[0]);
-      });
-
-      // 🔥 FILTRO PRINCIPAL (AQUI ESTÁ A CORREÇÃO)
       const tituloLower = titulo.toLowerCase();
 
       const isFederal = tituloLower.includes("federal");
+      const is10 = tituloLower.includes("1 ao 10");
 
-      const is10 = tituloLower.includes("1 ao 10") || tituloLower.includes("10º");
-      const is5  = tituloLower.includes("1 ao 5") || tituloLower.includes("5º");
+      if (isFederal && is10) return;
 
-      // ❌ remove versão errada da federal
-      if(isFederal && is10) return;
+      const nums = [];
 
-      // ✅ garante só 1 ao 5
-      if(nums.length >= 5){
+      $(tabela).find("tr").each((i, tr) => {
+        const match = $(tr).text().match(/\d{4}/);
+        if (match) nums.push(match[0]);
+      });
+
+      if (nums.length >= 5) {
+
+        const numeros = nums.slice(0, 5);
+        const chave = numeros.join("-");
+
+        if (vistos.has(chave)) return;
+        vistos.add(chave);
+
+        // 📅 DATA REAL DO TEXTO
+        const dataExtraida = extrairData(titulo);
+
+        // 🕒 HORÁRIO REAL FIXO
+        let horarioReal = "00:00";
+
+        if (banca === "federal") {
+          horarioReal = "19:00";
+        } else {
+          horarioReal = HORARIOS[banca][lista.length] || "00:00";
+        }
 
         lista.push({
-          horario: titulo
-            .replace(/1 ao 10º?/gi, "")
-            .replace(/1 ao 5º?/gi, "")
-            .trim(),
-
-          p1: nums[0],
-          p2: nums[1],
-          p3: nums[2],
-          p4: nums[3],
-          p5: nums[4]
+          data: dataExtraida,
+          horario: horarioReal,
+          p1: numeros[0],
+          p2: numeros[1],
+          p3: numeros[2],
+          p4: numeros[3],
+          p5: numeros[4]
         });
 
       }
@@ -81,176 +152,177 @@ async function scraper(url){
 
     return lista;
 
-  }catch(e){
+  } catch (e) {
     console.log("❌ erro scraper:", url);
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🏦 BANCAS
+// 🏦 PEGAR TODAS BANCAS
 //////////////////////////////////////////////////
 
-async function pegarBancas(){
+async function pegarTudo() {
   return {
-    rio: await scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
-    look: await scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
-    nacional: await scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje")
+    rio: await scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje", "rio"),
+    look: await scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje", "look"),
+    nacional: await scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje", "nacional"),
+    federal: await scraper("https://www.resultadofacil.com.br/resultado-banca-federal", "federal")
   };
 }
 
 //////////////////////////////////////////////////
-// 🇧🇷 FEDERAL (CORRIGIDA)
+// 💾 SALVAR BANCO
 //////////////////////////////////////////////////
 
-async function pegarFederal(){
-  let lista = await scraper("https://www.resultadofacil.com.br/resultado-banca-federal");
+async function salvarBanco(dados) {
 
-  // 🔥 FORÇA PADRÃO 1 AO 5 + LIMPA TEXTO
-  lista = lista.map(item => ({
-    horario: item.horario
-      .replace(/1 ao 10º?/gi, "")
-      .replace(/1 ao 5º?/gi, "")
-      .replace(/resultado do dia/gi, "")
-      .trim(),
+  for (const banca in dados) {
 
-    p1: item.p1,
-    p2: item.p2,
-    p3: item.p3,
-    p4: item.p4,
-    p5: item.p5
-  }));
+    for (const item of dados[banca]) {
 
-  return lista;
-}
+      const chave = `${banca}-${item.data}-${item.horario}-${item.p1}`;
 
-//////////////////////////////////////////////////
-// 💾 HISTÓRICO
-//////////////////////////////////////////////////
+      const uniqueId = chave;
 
-function lerHistorico(){
-  try{
-    if(!fs.existsSync(HISTORICO_FILE)) return {};
-    const data = fs.readFileSync(HISTORICO_FILE);
-    if(!data || data.length === 0) return {};
-    return JSON.parse(data);
-  }catch{
-    return {};
-  }
-}
+      await Resultado.updateOne(
+        { uniqueId },
+        {
+          $set: {
+            data: item.data,
+            banca,
+            horario: item.horario,
+            p1: item.p1,
+            p2: item.p2,
+            p3: item.p3,
+            p4: item.p4,
+            p5: item.p5
+          }
+        },
+        { upsert: true }
+      );
 
-function salvarHistorico(dadosHoje){
-
-  let historico = lerHistorico();
-
-  let dataBase = new Date().toISOString().split("T")[0];
-
-  try{
-    const exemplo =
-      dadosHoje.rio?.[0]?.horario ||
-      dadosHoje.look?.[0]?.horario ||
-      dadosHoje.nacional?.[0]?.horario ||
-      dadosHoje.federal?.[0]?.horario;
-
-    const match = exemplo?.match(/\d{2}\/\d{2}\/\d{4}/);
-
-    if(match){
-      const [d,m,a] = match[0].split("/");
-      dataBase = `${a}-${m}-${d}`;
     }
 
-  }catch{}
-
-  // 🔥 garante estrutura
-  if(!historico[dataBase]){
-    historico[dataBase] = {
-      rio: [],
-      look: [],
-      nacional: [],
-      federal: []
-    };
   }
 
-  const bancas = ["rio","look","nacional","federal"];
+}
 
-  bancas.forEach(banca => {
+//////////////////////////////////////////////////
+// 📊 HISTÓRICO
+//////////////////////////////////////////////////
 
-    const novos = dadosHoje[banca] || [];
-    const antigos = historico[dataBase][banca] || [];
+async function pegarHistorico() {
 
-    // 🔥 remove duplicados por horário
-    const mapa = {};
+  const dados = await Resultado.find()
+    .sort({ data: -1, horario: 1 })
+    .limit(1000);
 
-    antigos.forEach(i => mapa[i.horario] = i);
-    novos.forEach(i => mapa[i.horario] = i);
+  const agrupado = {};
 
-    historico[dataBase][banca] = Object.values(mapa);
+  dados.forEach(r => {
+
+    if (!agrupado[r.data]) {
+      agrupado[r.data] = {
+        rio: [],
+        look: [],
+        nacional: [],
+        federal: []
+      };
+    }
+
+    const lista = agrupado[r.data][r.banca];
+
+    const existe = lista.some(i =>
+      i.horario === r.horario && i.p1 === r.p1
+    );
+
+    if (!existe) {
+      lista.push({
+        horario: r.horario,
+        p1: r.p1,
+        p2: r.p2,
+        p3: r.p3,
+        p4: r.p4,
+        p5: r.p5
+      });
+    }
 
   });
 
-  // 🔥 mantém só 7 dias
-  const datas = Object.keys(historico)
-    .sort((a,b)=> new Date(b) - new Date(a))
-    .slice(0,7);
-
-  const novo = {};
-  datas.forEach(d => novo[d] = historico[d]);
-
-  fs.writeFileSync(HISTORICO_FILE, JSON.stringify(novo, null, 2));
+  return agrupado;
 }
 
 //////////////////////////////////////////////////
-// 🚀 MAIN
+// 🔐 LOGIN
 //////////////////////////////////////////////////
 
-let cache = null;
-let tempo = 0;
+app.post("/register", async (req, res) => {
+  const { username, password } = req.body;
 
-async function carregarTudo(){
+  const hash = await bcrypt.hash(password, 10);
 
-  const agora = Date.now();
+  await User.create({ username, password: hash });
 
-  if(cache && agora - tempo < 60000){
-    return cache;
+  res.json({ ok: true });
+});
+
+app.post("/login", async (req, res) => {
+  const { username, password } = req.body;
+
+  const user = await User.findOne({ username });
+  if (!user) return res.status(400).json({ erro: "Usuário não existe" });
+
+  const ok = await bcrypt.compare(password, user.password);
+  if (!ok) return res.status(400).json({ erro: "Senha inválida" });
+
+  const token = jwt.sign({ id: user._id }, SECRET, {
+    expiresIn: "7d"
+  });
+
+  res.json({ token });
+});
+
+//////////////////////////////////////////////////
+// 🌐 ROTA PRINCIPAL
+//////////////////////////////////////////////////
+
+app.get("/resultados", async (req, res) => {
+
+  try {
+
+    const dados = await pegarTudo();
+
+    await salvarBanco(dados);
+
+    const historico = await pegarHistorico();
+
+    res.json({
+      atualizado: new Date().toLocaleString(),
+      historico
+    });
+
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ erro: "Erro no servidor" });
   }
 
-  console.log("🔄 Atualizando dados...");
-
-  const bancas = await pegarBancas();
-  const federal = await pegarFederal();
-
-  const dadosHoje = {
-    ...bancas,
-    federal
-  };
-
-  salvarHistorico(dadosHoje);
-
-  const historico = lerHistorico();
-
-  cache = {
-    atualizado: new Date().toLocaleString(),
-    historico
-  };
-
-  tempo = agora;
-
-  return cache;
-}
-
-//////////////////////////////////////////////////
-// 🌐 ROTA
-//////////////////////////////////////////////////
-
-app.get("/resultados", async (req,res)=>{
-  const dados = await carregarTudo();
-  res.json(dados);
 });
+
+//////////////////////////////////////////////////
+// 🔄 AUTO UPDATE
+//////////////////////////////////////////////////
+
+setInterval(async () => {
+  console.log("⏳ Atualizando...");
+  const dados = await pegarTudo();
+  await salvarBanco(dados);
+}, 5 * 60 * 1000);
 
 //////////////////////////////////////////////////
 // 🚀 START
 //////////////////////////////////////////////////
 
-app.listen(PORT, ()=>{
-  console.log("🚀 Server rodando na porta", PORT);
+app.listen(PORT, () => {
+  console.log("🚀 API rodando na porta", PORT);
 });
