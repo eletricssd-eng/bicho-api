@@ -14,27 +14,6 @@ const PORT = process.env.PORT || 3000;
 const SECRET = process.env.JWT_SECRET || "segredo";
 
 //////////////////////////////////////////////////
-// 🔐 MIDDLEWARE AUTH
-//////////////////////////////////////////////////
-
-function auth(req, res, next){
-
-  const token = req.headers.authorization;
-
-  if(!token){
-    return res.status(401).json({ erro: "Token não enviado" });
-  }
-
-  try{
-    const decoded = jwt.verify(token, SECRET);
-    req.userId = decoded.id;
-    next();
-  }catch{
-    return res.status(401).json({ erro: "Token inválido ou expirado" });
-  }
-}
-
-//////////////////////////////////////////////////
 // 🔗 MONGO
 //////////////////////////////////////////////////
 
@@ -87,7 +66,7 @@ const HORARIOS = {
 };
 
 //////////////////////////////////////////////////
-// 📅 EXTRAIR DATA
+// 📅 EXTRAIR DATA DO TEXTO
 //////////////////////////////////////////////////
 
 function extrairData(texto){
@@ -145,8 +124,10 @@ async function scraper(url, banca) {
         if (vistos.has(chave)) return;
         vistos.add(chave);
 
+        // 📅 DATA REAL DO TEXTO
         const dataExtraida = extrairData(titulo);
 
+        // 🕒 HORÁRIO REAL FIXO
         let horarioReal = "00:00";
 
         if (banca === "federal") {
@@ -178,7 +159,7 @@ async function scraper(url, banca) {
 }
 
 //////////////////////////////////////////////////
-// 🏦 PEGAR DADOS
+// 🏦 PEGAR TODAS BANCAS
 //////////////////////////////////////////////////
 
 async function pegarTudo() {
@@ -200,7 +181,9 @@ async function salvarBanco(dados) {
 
     for (const item of dados[banca]) {
 
-      const uniqueId = `${banca}-${item.data}-${item.horario}-${item.p1}`;
+      const chave = `${banca}-${item.data}-${item.horario}-${item.p1}`;
+
+      const uniqueId = chave;
 
       await Resultado.updateOne(
         { uniqueId },
@@ -222,6 +205,7 @@ async function salvarBanco(dados) {
     }
 
   }
+
 }
 
 //////////////////////////////////////////////////
@@ -270,100 +254,40 @@ async function pegarHistorico() {
 }
 
 //////////////////////////////////////////////////
-// 🔐 REGISTER
-//////////////////////////////////////////////////
-
-app.post("/register", async (req, res) => {
-
-  try{
-
-    const { username, password } = req.body;
-
-    if(!username || !password){
-      return res.status(400).json({ erro: "Preencha tudo" });
-    }
-
-    const existe = await User.findOne({ username });
-
-    if(existe){
-      return res.status(400).json({ erro: "Usuário já existe" });
-    }
-
-    const hash = await bcrypt.hash(password, 10);
-
-    await User.create({ username, password: hash });
-
-    res.json({ ok: true });
-
-  }catch{
-    res.status(500).json({ erro: "Erro no registro" });
-  }
-
-});
-
-//////////////////////////////////////////////////
 // 🔐 LOGIN
 //////////////////////////////////////////////////
 
+app.post("/register", async (req, res) => {
+  const { username, password } = req.body;
+
+  const hash = await bcrypt.hash(password, 10);
+
+  await User.create({ username, password: hash });
+
+  res.json({ ok: true });
+});
+
 app.post("/login", async (req, res) => {
+  const { username, password } = req.body;
 
-  try{
+  const user = await User.findOne({ username });
+  if (!user) return res.status(400).json({ erro: "Usuário não existe" });
 
-    const { username, password } = req.body;
+  const ok = await bcrypt.compare(password, user.password);
+  if (!ok) return res.status(400).json({ erro: "Senha inválida" });
 
-    if(!username || !password){
-      return res.status(400).json({ erro: "Preencha tudo" });
-    }
+  const token = jwt.sign({ id: user._id }, SECRET, {
+    expiresIn: "7d"
+  });
 
-    const user = await User.findOne({ username });
-
-    if(!user){
-      return res.status(400).json({ erro: "Usuário não existe" });
-    }
-
-    const ok = await bcrypt.compare(password, user.password);
-
-    if(!ok){
-      return res.status(400).json({ erro: "Senha inválida" });
-    }
-
-    const token = jwt.sign(
-      { id: user._id },
-      SECRET,
-      { expiresIn: "7d" }
-    );
-
-    res.json({
-      token,
-      user: {
-        id: user._id,
-        username: user.username
-      }
-    });
-
-  }catch{
-    res.status(500).json({ erro: "Erro no login" });
-  }
-
+  res.json({ token });
 });
 
 //////////////////////////////////////////////////
-// 👤 USUÁRIO LOGADO
+// 🌐 ROTA PRINCIPAL
 //////////////////////////////////////////////////
 
-app.get("/me", auth, async (req, res) => {
-
-  const user = await User.findById(req.userId).select("-password");
-
-  res.json(user);
-
-});
-
-//////////////////////////////////////////////////
-// 🌐 RESULTADOS (PROTEGIDO)
-//////////////////////////////////////////////////
-
-app.get("/resultados", auth, async (req, res) => {
+app.get("/resultados", async (req, res) => {
 
   try {
 
