@@ -152,19 +152,18 @@ async function salvarBanco(dados) {
 
   const dataHoje = new Date().toISOString().split("T")[0];
   const jaSalvos = new Set();
-  
+
   for (const banca in dados) {
 
     for (const item of dados[banca] || []) {
 
-  if (!item) continue;
-
+      if (!item) continue;
 
       const hora = normalizarHorario(item.horario || "");
 
-      const uniqueId = `${dataHoje}-${banca}-${hora}-${item.p1}-${item.p2}-${item.p3}-${item.p4}-${item.p5}`;
+      const chave = `${banca}-${hora}-${item.p1}-${item.p2}-${item.p3}-${item.p4}-${item.p5}`;
 
-      if (!jaSalvos.has(chave)) continue;
+      if (jaSalvos.has(chave)) continue;
       jaSalvos.add(chave);
 
       const uniqueId = `${dataHoje}-${chave}`;
