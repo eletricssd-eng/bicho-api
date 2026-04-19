@@ -337,6 +337,35 @@ function normalizarResultados(historico) {
 }
 
 //////////////////////////////////////////////////
+//     NORMALIZAR HORARIO
+//////////////////////////////////////////////////
+
+function normalizarHorario(h) {
+  // pega apenas hora tipo 09, 11, 14...
+  const match = h.match(/\b(\d{2})[:h]?/);
+  return match ? match[1] : h;
+}
+
+function removerDuplicados(lista) {
+  const mapa = new Map();
+
+  lista.forEach(item => {
+    const horario = normalizarHorario(item.horario);
+
+    const chave = `${horario}-${item.p1}-${item.p2}-${item.p3}-${item.p4}-${item.p5}`;
+
+    if (!mapa.has(chave)) {
+      mapa.set(chave, {
+        ...item,
+        horario // salva só horário limpo
+      });
+    }
+  });
+
+  return Array.from(mapa.values());
+}
+
+//////////////////////////////////////////////////
 // 🔐 LOGIN
 //////////////////////////////////////////////////
 
