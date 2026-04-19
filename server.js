@@ -62,7 +62,7 @@ const HORARIOS = {
   rio: ["09:20","11:00","14:20","16:00","21:20"],
   look: ["07:00","09:00","11:00","14:00","16:00","18:00","21:00","23:00"],
   nacional: ["02:00","08:00","10:00","12:00","15:00","17:00","20:00","23:00"],
-  federal: ["20:00"]
+  federal: ["19:00"]
 };
 
 //////////////////////////////////////////////////
@@ -131,7 +131,7 @@ async function scraper(url, banca) {
         let horarioReal = "00:00";
 
         if (banca === "federal") {
-          horarioReal = "20:00";
+          horarioReal = "19:00";
         } else {
           horarioReal = HORARIOS[banca][lista.length] || "00:00";
         }
