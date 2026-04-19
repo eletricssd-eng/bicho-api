@@ -278,6 +278,65 @@ async function pegarHistorico() {
 }
 
 //////////////////////////////////////////////////
+// ORGANIZAR HISTORICO
+//////////////////////////////////////////////////
+
+function normalizarResultados(historico) {
+  const resultadoFinal = [];
+
+  for (const data in historico) {
+    const bancas = historico[data];
+
+    for (const banca in bancas) {
+      const lista = bancas[banca];
+
+      const vistos = new Set();
+
+      lista.forEach(item => {
+        let horario = "";
+        let tipo = "";
+
+        // 👉 CASO VENHA COMPLETO (PT-RIO...)
+        if (item.horario.includes(",")) {
+          const partes = item.horario.split(",");
+
+          // Ex: " 09:20"
+          horario = partes[2]?.trim() || "";
+
+          // Ex: " PT"
+          tipo = partes[3]?.split("-")[0].trim() || "";
+        } else {
+          // 👉 CASO SIMPLES (09, 11...)
+          horario = item.horario + ":00";
+          tipo = "";
+        }
+
+        // chave única pra evitar repetição
+        const chave = `${data}-${banca}-${horario}-${item.p1}-${item.p2}-${item.p3}-${item.p4}-${item.p5}`;
+
+        if (!vistos.has(chave)) {
+          vistos.add(chave);
+
+          resultadoFinal.push({
+            data: data.split("-").reverse().join("/"),
+            banca,
+            horario,
+            tipo,
+            p1: item.p1,
+            p2: item.p2,
+            p3: item.p3,
+            p4: item.p4,
+            p5: item.p5
+          });
+        }
+      });
+    }
+  }
+
+  return resultadoFinal;
+}
+
+//////////////////////////////////////////////////
 // 🔐 LOGIN
 //////////////////////////////////////////////////
 
