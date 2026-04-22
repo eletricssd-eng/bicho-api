@@ -1,85 +1,104 @@
-/* RESET */
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-  font-family: Arial, sans-serif;
+body{
+  font-family: Arial;
+  text-align:center;
+  background:#eaf7ea;
+  margin:0;
 }
 
-/* FUNDO */
-body {
-  background: #0f172a;
-  color: #fff;
-  padding: 15px;
+/* TOPO */
+h1{
+  background:#2ecc71;
+  color:white;
+  padding:15px;
+  margin:0;
 }
 
-/* TÍTULO */
-h1 {
-  text-align: center;
-  margin-bottom: 20px;
-  color: #38bdf8;
+/* LOGIN */
+input{
+  padding:10px;
+  margin:5px;
+  width:200px;
+  border-radius:8px;
+  border:1px solid #ccc;
 }
 
-/* CARD PRINCIPAL */
-#resultado {
-  background: #1e293b;
-  padding: 15px;
-  border-radius: 12px;
-  box-shadow: 0 0 10px rgba(0,0,0,0.5);
-  overflow-x: auto;
+button{
+  padding:10px;
+  margin:5px;
+  border:none;
+  border-radius:8px;
+  cursor:pointer;
 }
 
-/* CADA BANCA */
-.banca {
-  margin-bottom: 15px;
-  padding: 10px;
-  background: #334155;
-  border-radius: 10px;
+/* MENU */
+.menu{
+  display:flex;
+  gap:5px;
+  justify-content:center;
+  flex-wrap:wrap;
+  margin:10px;
 }
 
-/* TÍTULO DA BANCA */
-.banca h2 {
-  margin-bottom: 10px;
-  color: #facc15;
+.menu-btn{
+  background:#3498db;
+  color:white;
+}
+
+.menu-btn.ativo{
+  background:#2ecc71;
+}
+
+/* TELAS */
+.tela{
+  display:none;
+}
+
+/* CARDS */
+.card{
+  background:white;
+  padding:10px;
+  margin:5px;
+  border-radius:10px;
+}
+
+/* TABELA */
+#tabela{
+  display:grid;
+  grid-template-columns:repeat(5,1fr);
+  gap:5px;
+  padding:10px;
+}
+
+.bicho{
+  background:white;
+  padding:10px;
+  border-radius:8px;
+}
+
+/* BANCAS */
+#bancasBox {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+
+#bancasBox button {
+  padding: 8px 14px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: bold;
+  background:#2ecc71;
+  color:white;
 }
 
 /* RESULTADOS */
-.resultado-item {
-  display: flex;
-  justify-content: space-between;
-  padding: 6px;
-  border-bottom: 1px solid #475569;
-}
-
-/* ÚLTIMO ITEM */
-.resultado-item:last-child {
-  border-bottom: none;
-}
-
-/* HORÁRIO */
-.horario {
-  font-weight: bold;
-  color: #38bdf8;
-}
-
-/* NÚMEROS */
-.numeros {
-  font-family: monospace;
-}
-
-/* BOTÃO (se usar depois) */
-button {
-  width: 100%;
-  padding: 10px;
-  margin-top: 10px;
-  border: none;
-  border-radius: 8px;
-  background: #38bdf8;
-  color: #000;
-  font-weight: bold;
-  cursor: pointer;
-}
-
-button:hover {
-  background: #0ea5e9;
+#resultadosBox div{
+  background:white;
+  margin:5px;
+  padding:10px;
+  border-radius:8px;
 }
