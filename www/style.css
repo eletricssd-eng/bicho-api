@@ -1,0 +1,85 @@
+/* RESET */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: Arial, sans-serif;
+}
+
+/* FUNDO */
+body {
+  background: #0f172a;
+  color: #fff;
+  padding: 15px;
+}
+
+/* TÍTULO */
+h1 {
+  text-align: center;
+  margin-bottom: 20px;
+  color: #38bdf8;
+}
+
+/* CARD PRINCIPAL */
+#resultado {
+  background: #1e293b;
+  padding: 15px;
+  border-radius: 12px;
+  box-shadow: 0 0 10px rgba(0,0,0,0.5);
+  overflow-x: auto;
+}
+
+/* CADA BANCA */
+.banca {
+  margin-bottom: 15px;
+  padding: 10px;
+  background: #334155;
+  border-radius: 10px;
+}
+
+/* TÍTULO DA BANCA */
+.banca h2 {
+  margin-bottom: 10px;
+  color: #facc15;
+}
+
+/* RESULTADOS */
+.resultado-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px;
+  border-bottom: 1px solid #475569;
+}
+
+/* ÚLTIMO ITEM */
+.resultado-item:last-child {
+  border-bottom: none;
+}
+
+/* HORÁRIO */
+.horario {
+  font-weight: bold;
+  color: #38bdf8;
+}
+
+/* NÚMEROS */
+.numeros {
+  font-family: monospace;
+}
+
+/* BOTÃO (se usar depois) */
+button {
+  width: 100%;
+  padding: 10px;
+  margin-top: 10px;
+  border: none;
+  border-radius: 8px;
+  background: #38bdf8;
+  color: #000;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #0ea5e9;
+}
