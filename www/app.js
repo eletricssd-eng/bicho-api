@@ -263,13 +263,8 @@ if(bancaAtual === "federal"){
     const [ano,mes,dia] = hoje.split("-");
     const dataBR = `${dia}/${mes}/${ano}`;
 
-    let html = `
-      <div style="
-        display:grid;
-        grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
-        gap:10px;
-      ">
-    `;
+    let html = `<div class="grid-5">`;
+   
 
     html += lista.map(item=>{
 
@@ -360,7 +355,7 @@ async function carregarAnalise(){
   });
 
   box.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:5px;">
+    <div class="grid-5">
       ${bichos.map((b,i)=>{
         const g=i+1;
         return `
@@ -447,11 +442,7 @@ if(bancaAtual === "federal"){
 
   // 🔥 GRID FIXO SEMPRE
   box.innerHTML = `
-    <div style="
-      display:grid;
-      grid-template-columns:repeat(5,1fr);
-      gap:6px;
-    ">
+    <div class="grid-5">
       ${bichos.map(b=>{
         const v = freq[b[1]];
         return `

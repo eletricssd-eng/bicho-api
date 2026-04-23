@@ -1,9 +1,5 @@
 {
   "appId": "com.bicho.app",
   "appName": "Bicho Pro",
-  "webDir": "www",
-  "server": {
-    "url": "https://bicho-api.onrender.com/resultados",
-    "cleartext": true
-  }
+  "webDir": "www"
 }

@@ -1,78 +1,51 @@
-body{
-  font-family: Arial;
-  text-align:center;
-  background:#eaf7ea;
-  margin:0;
+/* RESET */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
 
-/* TOPO */
-h1{
-  background:#2ecc71;
-  color:white;
-  padding:15px;
-  margin:0;
+body {
+  font-family: Arial, sans-serif;
+  background: #eaf7ea;
+  color: #000;
 }
 
-/* LOGIN */
-input{
-  padding:10px;
-  margin:5px;
-  width:200px;
-  border-radius:8px;
-  border:1px solid #ccc;
-}
-
-button{
-  padding:10px;
-  margin:5px;
-  border:none;
-  border-radius:8px;
-  cursor:pointer;
-}
-
-/* MENU */
-.menu{
-  display:flex;
-  gap:5px;
-  justify-content:center;
-  flex-wrap:wrap;
-  margin:10px;
-}
-
-.menu-btn{
-  background:#3498db;
-  color:white;
-}
-
-.menu-btn.ativo{
-  background:#2ecc71;
+/* TITULO */
+h1 {
+  background: #2ecc71;
+  color: #fff;
+  text-align: center;
+  padding: 12px;
+  font-size: 18px;
 }
 
 /* TELAS */
-.tela{
-  display:none;
+.tela {
+  display: none;
+  padding: 10px;
 }
 
-/* CARDS */
-.card{
-  background:white;
-  padding:10px;
-  margin:5px;
-  border-radius:10px;
+/* MENU */
+.menu {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 8px;
+  background: #1a1a1a;
 }
 
-/* TABELA */
-#tabela{
-  display:grid;
-  grid-template-columns:repeat(5,1fr);
-  gap:5px;
-  padding:10px;
+.menu-btn {
+  min-width: 90px;
+  background: #3498db;
+  color: #fff;
+  border: none;
+  padding: 8px;
+  border-radius: 8px;
 }
 
-.bicho{
-  background:white;
-  padding:10px;
-  border-radius:8px;
+.menu-btn.ativo {
+  background: #2ecc71;
 }
 
 /* BANCAS */
@@ -80,25 +53,93 @@ button{
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 10px;
   flex-wrap: wrap;
+  gap: 10px;
   margin: 10px 0;
 }
 
 #bancasBox button {
   padding: 8px 14px;
-  border: none;
   border-radius: 8px;
-  cursor: pointer;
+  border: none;
   font-weight: bold;
-  background:#2ecc71;
-  color:white;
 }
 
-/* RESULTADOS */
-#resultadosBox div{
-  background:white;
-  margin:5px;
-  padding:10px;
-  border-radius:8px;
+/* 🔥 GRID PADRÃO (IGUAL TABELA) */
+.grid-5 {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+
+/* TABELA */
+#tabela {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 5px;
+}
+
+.bicho {
+  background: #fff;
+  border-radius: 8px;
+  text-align: center;
+  padding: 10px;
+  font-size: 14px;
+}
+
+/* CARDS */
+.card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 14px;
+  text-align: center;
+}
+
+/* 🔥 RESULTADOS (lado a lado) */
+#resultadosBox {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr); /* 2 colunas no celular */
+  gap: 10px;
+}
+
+/* 🔥 ANALISE GRANDE */
+#analiseBox {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+}
+
+/* 🔥 MAPA GRANDE */
+#mapaGrid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+}
+
+#mapaGrid div {
+  padding: 14px;
+  border-radius: 10px;
+  text-align: center;
+  font-size: 14px;
+}
+
+/* BOTÕES MAPA */
+#mapaBotoes {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  margin-bottom: 10px;
+}
+
+/* RESPONSIVO */
+@media (max-width: 400px) {
+  .bicho {
+    font-size: 13px;
+    padding: 10px;
+  }
+
+  .card {
+    font-size: 12px;
+  }
 }

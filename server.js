@@ -55,34 +55,29 @@ const UserSchema = new mongoose.Schema({
 const User = mongoose.model("User", UserSchema);
 
 //////////////////////////////////////////////////
-// 🧠 HORÁRIOS REAIS
-//////////////////////////////////////////////////
-
-const HORARIOS = {
-  rio: ["09:20","11:00","14:20","16:00","21:20"],
-  look: ["07:00","09:00","11:00","14:00","16:00","18:00","21:00","23:00"],
-  nacional: ["02:00","08:00","10:00","12:00","15:00","17:00","20:00","23:00"],
-  federal: ["19:00"]
-};
-
-//////////////////////////////////////////////////
-// 📅 EXTRAIR DATA DO TEXTO
+// 🧠 FUNÇÕES AUXILIARES
 //////////////////////////////////////////////////
 
 function extrairData(texto){
-
   const match = texto.match(/\d{2}\/\d{2}\/\d{4}/);
-
   if(match){
     const [d,m,a] = match[0].split("/");
     return `${a}-${m}-${d}`;
   }
-
   return new Date().toISOString().split("T")[0];
 }
 
+function extrairHorario(texto) {
+  const match = texto.match(/\d{2}:\d{2}/);
+  return match ? match[0] : null;
+}
+
+function numerosValidos(nums){
+  return nums.length >= 5 && nums.every(n => /^\d{4}$/.test(n));
+}
+
 //////////////////////////////////////////////////
-// 🔍 SCRAPER
+// 🔍 SCRAPER MELHORADO
 //////////////////////////////////////////////////
 
 async function scraper(url, banca) {
@@ -100,53 +95,49 @@ async function scraper(url, banca) {
     $("table").each((i, tabela) => {
 
       let titulo = $(tabela).prevAll("h2, h3, strong").first().text().trim();
-      if (!titulo) titulo = "Horário " + (i + 1);
+      if (!titulo) return;
 
       const tituloLower = titulo.toLowerCase();
 
-      const isFederal = tituloLower.includes("federal");
-      const is10 = tituloLower.includes("1 ao 10");
-
-      if (isFederal && is10) return;
+      // ignora federal duplicada
+      if (tituloLower.includes("federal") && tituloLower.includes("1 ao 10")) return;
 
       const nums = [];
 
       $(tabela).find("tr").each((i, tr) => {
-        const match = $(tr).text().match(/\d{4}/);
-        if (match) nums.push(match[0]);
+        const match = $(tr).text().match(/\b\d{4}\b/g);
+        if (match) nums.push(...match);
       });
 
-      if (nums.length >= 5) {
+      const numeros = nums.slice(0, 5);
 
-        const numeros = nums.slice(0, 5);
-        const chave = numeros.join("-");
+      if (!numerosValidos(numeros)) return;
 
-        if (vistos.has(chave)) return;
-        vistos.add(chave);
+      const chave = numeros.join("-");
+      if (vistos.has(chave)) return;
+      vistos.add(chave);
 
-        // 📅 DATA REAL DO TEXTO
-        const dataExtraida = extrairData(titulo);
+      const dataExtraida = extrairData(titulo);
 
-        // 🕒 HORÁRIO REAL FIXO
-        let horarioReal = "00:00";
+      let horarioReal = extrairHorario(titulo);
 
-        if (banca === "federal") {
-          horarioReal = "19:00";
-        } else {
-          horarioReal = HORARIOS[banca][lista.length] || "00:00";
-        }
-
-        lista.push({
-          data: dataExtraida,
-          horario: horarioReal,
-          p1: numeros[0],
-          p2: numeros[1],
-          p3: numeros[2],
-          p4: numeros[3],
-          p5: numeros[4]
-        });
-
+      // fallback se não tiver horário
+      if (!horarioReal) {
+        if (banca === "federal") horarioReal = "19:00";
+        else return; // ignora se não tiver horário claro
       }
+
+      console.log("✔", banca, horarioReal, numeros);
+
+      lista.push({
+        data: dataExtraida,
+        horario: horarioReal,
+        p1: numeros[0],
+        p2: numeros[1],
+        p3: numeros[2],
+        p4: numeros[3],
+        p5: numeros[4]
+      });
 
     });
 
@@ -159,7 +150,7 @@ async function scraper(url, banca) {
 }
 
 //////////////////////////////////////////////////
-// 🏦 PEGAR TODAS BANCAS
+// 🏦 PEGAR TUDO
 //////////////////////////////////////////////////
 
 async function pegarTudo() {
@@ -172,7 +163,7 @@ async function pegarTudo() {
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR BANCO
+// 💾 SALVAR
 //////////////////////////////////////////////////
 
 async function salvarBanco(dados) {
@@ -181,9 +172,9 @@ async function salvarBanco(dados) {
 
     for (const item of dados[banca]) {
 
-      const chave = `${banca}-${item.data}-${item.horario}-${item.p1}`;
+      if (!item.horario) continue;
 
-      const uniqueId = chave;
+      const uniqueId = `${banca}-${item.data}-${item.horario}-${item.p1}`;
 
       await Resultado.updateOne(
         { uniqueId },
@@ -209,101 +200,46 @@ async function salvarBanco(dados) {
 }
 
 //////////////////////////////////////////////////
-// 📊 HISTÓRICO
+// 🔄 ATUALIZAÇÃO INTELIGENTE
 //////////////////////////////////////////////////
 
-async function pegarHistorico() {
+async function atualizarComRetry() {
 
-  const dados = await Resultado.find()
-    .sort({ data: -1, horario: 1 })
-    .limit(1000);
+  console.log("⏳ Atualizando...");
 
-  const agrupado = {};
+  const dados = await pegarTudo();
 
-  dados.forEach(r => {
+  const incompleto =
+    dados.look.length < 7 ||
+    dados.rio.length < 5;
 
-    if (!agrupado[r.data]) {
-      agrupado[r.data] = {
-        rio: [],
-        look: [],
-        nacional: [],
-        federal: []
-      };
-    }
+  if (incompleto) {
+    console.log("⚠️ Dados incompletos, tentando novamente depois...");
+    return;
+  }
 
-    const lista = agrupado[r.data][r.banca];
+  await salvarBanco(dados);
 
-    const existe = lista.some(i =>
-      i.horario === r.horario && i.p1 === r.p1
-    );
-
-    if (!existe) {
-      lista.push({
-        horario: r.horario,
-        p1: r.p1,
-        p2: r.p2,
-        p3: r.p3,
-        p4: r.p4,
-        p5: r.p5
-      });
-    }
-
-  });
-
-  return agrupado;
+  console.log("✅ Atualizado com sucesso");
 }
 
 //////////////////////////////////////////////////
-// 🔐 LOGIN
-//////////////////////////////////////////////////
-
-app.post("/register", async (req, res) => {
-  const { username, password } = req.body;
-
-  const hash = await bcrypt.hash(password, 10);
-
-  await User.create({ username, password: hash });
-
-  res.json({ ok: true });
-});
-
-app.post("/login", async (req, res) => {
-  const { username, password } = req.body;
-
-  const user = await User.findOne({ username });
-  if (!user) return res.status(400).json({ erro: "Usuário não existe" });
-
-  const ok = await bcrypt.compare(password, user.password);
-  if (!ok) return res.status(400).json({ erro: "Senha inválida" });
-
-  const token = jwt.sign({ id: user._id }, SECRET, {
-    expiresIn: "7d"
-  });
-
-  res.json({ token });
-});
-
-//////////////////////////////////////////////////
-// 🌐 ROTA PRINCIPAL
+// 🌐 ROTA
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req, res) => {
 
   try {
 
-    const dados = await pegarTudo();
-
-    await salvarBanco(dados);
-
-    const historico = await pegarHistorico();
+    await atualizarComRetry();
+    const dados = await Resultado.find().sort({ data: -1 });
 
     res.json({
       atualizado: new Date().toLocaleString(),
-      historico
+      historico: dados
     });
 
   } catch (err) {
-    console.log(err);
     res.status(500).json({ erro: "Erro no servidor" });
   }
 
@@ -313,11 +249,7 @@ app.get("/resultados", async (req, res) => {
 // 🔄 AUTO UPDATE
 //////////////////////////////////////////////////
 
-setInterval(async () => {
-  console.log("⏳ Atualizando...");
-  const dados = await pegarTudo();
-  await salvarBanco(dados);
-}, 5 * 60 * 1000);
+setInterval(atualizarComRetry, 5 * 60 * 1000);
 
 //////////////////////////////////////////////////
 // 🚀 START
