@@ -77,7 +77,7 @@ function numerosValidos(nums){
 }
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER MELHORADO
+// 🔍 SCRAPER
 //////////////////////////////////////////////////
 
 async function scraper(url, banca) {
@@ -105,8 +105,8 @@ async function scraper(url, banca) {
       const nums = [];
 
       $(tabela).find("tr").each((i, tr) => {
-        const match = $(tr).text().match(/\b\d{4}\b/g);
-        if (match) nums.push(...match);
+        const matches = $(tr).text().match(/\b\d{4}\b/g);
+        if (matches) nums.push(...matches);
       });
 
       const numeros = nums.slice(0, 5);
@@ -121,13 +121,10 @@ async function scraper(url, banca) {
 
       let horarioReal = extrairHorario(titulo);
 
-      // fallback se não tiver horário
       if (!horarioReal) {
         if (banca === "federal") horarioReal = "19:00";
-        else return; // ignora se não tiver horário claro
+        else return;
       }
-
-      console.log("✔", banca, horarioReal, numeros);
 
       lista.push({
         data: dataExtraida,
@@ -150,7 +147,7 @@ async function scraper(url, banca) {
 }
 
 //////////////////////////////////////////////////
-// 🏦 PEGAR TUDO
+// 🏦 PEGAR TODAS
 //////////////////////////////////////////////////
 
 async function pegarTudo() {
@@ -163,7 +160,7 @@ async function pegarTudo() {
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR
+// 💾 SALVAR BANCO
 //////////////////////////////////////////////////
 
 async function salvarBanco(dados) {
@@ -200,46 +197,111 @@ async function salvarBanco(dados) {
 }
 
 //////////////////////////////////////////////////
-// 🔄 ATUALIZAÇÃO INTELIGENTE
+// 📊 HISTÓRICO (FORMATO DO APP)
 //////////////////////////////////////////////////
 
-async function atualizarComRetry() {
+async function pegarHistorico() {
 
-  console.log("⏳ Atualizando...");
+  const dados = await Resultado.find()
+    .sort({ data: -1, horario: 1 })
+    .limit(1000);
 
-  const dados = await pegarTudo();
+  const agrupado = {};
 
-  const incompleto =
-    dados.look.length < 7 ||
-    dados.rio.length < 5;
+  dados.forEach(r => {
 
-  if (incompleto) {
-    console.log("⚠️ Dados incompletos, tentando novamente depois...");
-    return;
-  }
+    if (!agrupado[r.data]) {
+      agrupado[r.data] = {
+        rio: [],
+        look: [],
+        nacional: [],
+        federal: []
+      };
+    }
 
-  await salvarBanco(dados);
+    const lista = agrupado[r.data][r.banca];
 
-  console.log("✅ Atualizado com sucesso");
+    const existe = lista.some(i =>
+      i.horario === r.horario && i.p1 === r.p1
+    );
+
+    if (!existe) {
+      lista.push({
+        horario: r.horario,
+        p1: r.p1,
+        p2: r.p2,
+        p3: r.p3,
+        p4: r.p4,
+        p5: r.p5
+      });
+    }
+
+  });
+
+  return agrupado;
 }
 
 //////////////////////////////////////////////////
-// 🌐 ROTA
+// 🔄 ATUALIZAÇÃO
+//////////////////////////////////////////////////
+
+async function atualizar() {
+  console.log("⏳ Atualizando...");
+  const dados = await pegarTudo();
+  await salvarBanco(dados);
+
+  console.log("📊 LOOK:", dados.look.length);
+  console.log("📊 RIO:", dados.rio.length);
+}
+
+//////////////////////////////////////////////////
+// 🔐 LOGIN
+//////////////////////////////////////////////////
+
+app.post("/register", async (req, res) => {
+  const { username, password } = req.body;
+
+  const hash = await bcrypt.hash(password, 10);
+
+  await User.create({ username, password: hash });
+
+  res.json({ ok: true });
+});
+
+app.post("/login", async (req, res) => {
+  const { username, password } = req.body;
+
+  const user = await User.findOne({ username });
+  if (!user) return res.status(400).json({ erro: "Usuário não existe" });
+
+  const ok = await bcrypt.compare(password, user.password);
+  if (!ok) return res.status(400).json({ erro: "Senha inválida" });
+
+  const token = jwt.sign({ id: user._id }, SECRET, {
+    expiresIn: "7d"
+  });
+
+  res.json({ token });
+});
+
+//////////////////////////////////////////////////
+// 🌐 ROTA PRINCIPAL
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req, res) => {
 
   try {
 
-    await atualizarComRetry();
-    const dados = await Resultado.find().sort({ data: -1 });
+    await atualizar();
+    const historico = await pegarHistorico();
 
     res.json({
       atualizado: new Date().toLocaleString(),
-      historico: dados
+      historico
     });
 
   } catch (err) {
+    console.log(err);
     res.status(500).json({ erro: "Erro no servidor" });
   }
 
@@ -249,7 +311,7 @@ app.get("/resultados", async (req, res) => {
 // 🔄 AUTO UPDATE
 //////////////////////////////////////////////////
 
-setInterval(atualizarComRetry, 5 * 60 * 1000);
+setInterval(atualizar, 5 * 60 * 1000);
 
 //////////////////////////////////////////////////
 // 🚀 START
