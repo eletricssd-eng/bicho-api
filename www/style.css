@@ -39,7 +39,7 @@ h1 {
 }
 
 .menu-btn {
-  min-width: 70px;
+  min-width: 60px;
   background: #3498db;
   color: #fff;
   border: none;
@@ -96,7 +96,7 @@ h1 {
 /* CARDS */
 .card {
   background: #fff;
-  padding: 14px;
+  padding: 10px;
   margin: 5px;
   border-radius: 10px;
   font-size: 14px;
@@ -113,18 +113,18 @@ h1 {
 #analiseBox {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 10px;
+  gap: 18px;
 }
 
 /* MAPA */
 #mapaGrid {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 10px;
+  gap: 18px;
 }
 
 #mapaGrid div {
-  padding: 14px;
+  padding: 18px;
   border-radius: 10px;
   text-align: center;
   font-size: 14px;
@@ -135,7 +135,7 @@ h1 {
   display: flex;
   gap: 5px;
   overflow-x: auto;
-  margin-bottom: 10px;
+  margin-bottom: 14px;
 }
 
 /* RESPONSIVO */

@@ -11,7 +11,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 //////////////////////////////////////////////////
-// 🇧🇷 TIMEZONE BRASIL
+// 🇧🇷 TIMEZONE
 //////////////////////////////////////////////////
 
 function agoraBR() {
@@ -21,27 +21,26 @@ function agoraBR() {
   });
 }
 
+function hojeBR() {
+  const d = new Date().toLocaleString("en-US", {
+    timeZone: "America/Sao_Paulo"
+  });
+  return new Date(d).toISOString().split("T")[0];
+}
+
 //////////////////////////////////////////////////
 // 🔗 MONGO
 //////////////////////////////////////////////////
 
-if (!process.env.MONGO_URI) {
-  console.log("❌ MONGO_URI não definida");
-  process.exit(1);
-}
-
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ Mongo conectado"))
-  .catch(err => {
-    console.log("❌ erro mongo:", err.message);
-    process.exit(1);
-  });
+  .catch(err => console.log(err));
 
 //////////////////////////////////////////////////
 // 📦 MODEL
 //////////////////////////////////////////////////
 
-const ResultadoSchema = new mongoose.Schema({
+const Resultado = mongoose.model("Resultado", {
   uniqueId: { type: String, unique: true },
   data: String,
   banca: String,
@@ -52,8 +51,6 @@ const ResultadoSchema = new mongoose.Schema({
   p4: String,
   p5: String
 });
-
-const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
 // 🧠 HORÁRIOS
@@ -70,52 +67,36 @@ const HORARIOS = {
 // 🧠 HELPERS
 //////////////////////////////////////////////////
 
-function extrairData(texto){
-  const match = texto.match(/\d{2}\/\d{2}\/\d{4}/);
-  if(match){
-    const [d,m,a] = match[0].split("/");
-    return `${a}-${m}-${d}`;
-  }
-  return new Date().toISOString().split("T")[0];
-}
-
-function normalizarHorario(texto) {
-  if (!texto) return null;
-
-  const match = texto.match(/(\d{1,2})[:h](\d{2})/i);
-  if (!match) return null;
-
-  let h = match[1].padStart(2, "0");
-  let m = match[2];
-
-  return `${h}:${m}`;
+function extrairHorario(texto) {
+  const m = texto.match(/(\d{1,2})[:h](\d{2})/);
+  if (!m) return null;
+  return `${m[1].padStart(2,"0")}:${m[2]}`;
 }
 
 function detectarFaltantes(dados) {
   const faltando = {};
   for (const banca in HORARIOS) {
-    const esperados = HORARIOS[banca];
     const recebidos = (dados[banca] || []).map(i => i.horario);
-    const faltantes = esperados.filter(h => !recebidos.includes(h));
-    if (faltantes.length > 0) faltando[banca] = faltantes;
+    const diff = HORARIOS[banca].filter(h => !recebidos.includes(h));
+    if (diff.length) faltando[banca] = diff;
   }
   return faltando;
 }
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER CORRIGIDO
+// 🔍 SCRAPER
 //////////////////////////////////////////////////
 
 async function scraper(url, banca) {
 
   try {
 
-    const { data } = await axios.get(url + "?t=" + Date.now(), {
+    const { data } = await axios.get(url + "?nocache=" + Date.now(), {
       headers: {
         "User-Agent": "Mozilla/5.0",
         "Cache-Control": "no-cache"
       },
-      timeout: 15000
+      timeout: 10000
     });
 
     const $ = cheerio.load(data);
@@ -124,57 +105,34 @@ async function scraper(url, banca) {
 
     $("table").each((i, tabela) => {
 
-      // 🔥 pega título correto
-      let container = $(tabela).closest("div");
+      let titulo = $(tabela).closest("div").text();
 
-      let titulo = container.find("h2, h3, strong, p").first().text().trim();
+      const horario = extrairHorario(titulo) || HORARIOS[banca][lista.length];
 
-      if (!titulo) {
-        titulo = $(tabela).prevAll("*").text();
-      }
-
-      const tituloLower = titulo.toLowerCase();
-
-      // ignora federal duplicada
-      if (tituloLower.includes("federal") && tituloLower.includes("1 ao 10")) return;
-
-      // 🔥 horário robusto
-      let horarioReal = normalizarHorario(titulo);
-
-      if (!horarioReal && HORARIOS[banca]) {
-        horarioReal = HORARIOS[banca][lista.length];
-      }
+      if (!horario) return;
 
       if (banca === "federal") {
-        horarioReal = "19:00";
-        if (lista.length >= 1) return; // evita duplicado
+        if (lista.length > 0) return;
       }
 
       const nums = [];
 
       $(tabela).find("tr").each((i, tr) => {
-        const matches = $(tr).text().match(/\b\d{4}\b/g);
-        if (matches) nums.push(...matches);
+        const m = $(tr).text().match(/\b\d{4}\b/g);
+        if (m) nums.push(...m);
       });
 
-      const numeros = nums
-        .filter(n => /^\d{4}$/.test(n))
-        .slice(0, 5);
+      const numeros = nums.slice(0, 5);
 
-      if (numeros.length < 5) {
-        console.log("⚠️ incompleto:", titulo);
-        return;
-      }
+      if (numeros.length < 5) return;
 
-      const chave = `${banca}-${horarioReal}-${numeros.join("-")}`;
+      const chave = `${banca}-${horario}-${numeros.join("-")}`;
       if (vistos.has(chave)) return;
       vistos.add(chave);
 
-      console.log("📊", banca, horarioReal, numeros);
-
       lista.push({
-        data: extrairData(titulo),
-        horario: horarioReal,
+        data: hojeBR(),
+        horario,
         p1: numeros[0],
         p2: numeros[1],
         p3: numeros[2],
@@ -193,10 +151,12 @@ async function scraper(url, banca) {
 }
 
 //////////////////////////////////////////////////
-// 🏦 PEGAR TODAS
+// 🔄 ATUALIZAR
 //////////////////////////////////////////////////
 
-async function pegarTudo() {
+async function atualizar() {
+  console.log("⏳ Atualizando...", agoraBR());
+
   const [rio, look, nacional, federal] = await Promise.all([
     scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje", "rio"),
     scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje", "look"),
@@ -204,113 +164,70 @@ async function pegarTudo() {
     scraper("https://www.resultadofacil.com.br/resultado-banca-federal", "federal")
   ]);
 
-  return { rio, look, nacional, federal };
-}
+  const dados = { rio, look, nacional, federal };
 
-//////////////////////////////////////////////////
-// 💾 SALVAR
-//////////////////////////////////////////////////
-
-async function salvarBanco(dados) {
   for (const banca in dados) {
     for (const item of dados[banca]) {
 
-      if (!item.horario) continue;
-
-      const uniqueId = `${banca}-${item.data}-${item.horario}-${item.p1}`;
+      const id = `${banca}-${item.data}-${item.horario}-${item.p1}`;
 
       await Resultado.updateOne(
-        { uniqueId },
+        { uniqueId: id },
         { $set: { ...item, banca } },
         { upsert: true }
       );
 
     }
   }
+
 }
 
 //////////////////////////////////////////////////
 // 📊 HISTÓRICO
 //////////////////////////////////////////////////
 
-async function pegarHistorico() {
+async function historicoHoje() {
 
-  const dados = await Resultado.find()
-    .sort({ data: -1, horario: 1 })
-    .limit(1000);
+  const hoje = hojeBR();
 
-  const agrupado = {};
+  const dados = await Resultado.find({ data: hoje });
+
+  const res = { rio: [], look: [], nacional: [], federal: [] };
 
   dados.forEach(r => {
-
-    if (!agrupado[r.data]) {
-      agrupado[r.data] = {
-        rio: [],
-        look: [],
-        nacional: [],
-        federal: []
-      };
-    }
-
-    const lista = agrupado[r.data][r.banca];
-
-    if (!lista.some(i => i.horario === r.horario && i.p1 === r.p1)) {
-      lista.push({
-        horario: r.horario,
-        p1: r.p1,
-        p2: r.p2,
-        p3: r.p3,
-        p4: r.p4,
-        p5: r.p5
-      });
-    }
-
+    res[r.banca].push({
+      horario: r.horario,
+      p1: r.p1,
+      p2: r.p2,
+      p3: r.p3,
+      p4: r.p4,
+      p5: r.p5
+    });
   });
 
-  return agrupado;
+  return res;
 }
 
 //////////////////////////////////////////////////
-// 🔄 ATUALIZAÇÃO
-//////////////////////////////////////////////////
-
-async function atualizar() {
-  console.log("⏳ Atualizando...", agoraBR());
-
-  const dados = await pegarTudo();
-  await salvarBanco(dados);
-}
-
-//////////////////////////////////////////////////
-// 🌐 ROTA PRINCIPAL
+// 🌐 ROTA
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req, res) => {
 
   try {
 
-    await atualizar();
-
-    const historico = await pegarHistorico();
-
-    // 🔥 pega última data REAL
-    const datas = Object.keys(historico);
-    const ultimaData = datas.sort().reverse()[0];
-
-    const hojeDados = historico[ultimaData] || {};
-
-    const faltando = detectarFaltantes(hojeDados);
+    const hoje = await historicoHoje();
+    const faltando = detectarFaltantes(hoje);
 
     res.json({
       atualizado: agoraBR(),
-      dataReferencia: ultimaData,
-      historico,
+      dataReferencia: hojeBR(),
+      resultados: hoje,
       faltando
     });
 
-  } catch (err) {
-    console.log(err);
-    res.status(500).json({ erro: "Erro no servidor" });
+  } catch (e) {
+    res.status(500).json({ erro: "Erro" });
   }
 
 });
@@ -319,12 +236,15 @@ app.get("/resultados", async (req, res) => {
 // 🔄 AUTO UPDATE
 //////////////////////////////////////////////////
 
-setInterval(atualizar, 60 * 1000);
+setInterval(atualizar, 60000);
+
+// roda ao iniciar
+atualizar();
 
 //////////////////////////////////////////////////
 // 🚀 START
 //////////////////////////////////////////////////
 
 app.listen(PORT, () => {
-  console.log("🚀 API rodando na porta", PORT);
+  console.log("🚀 Rodando...");
 });
