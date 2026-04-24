@@ -86,12 +86,10 @@ function extrairData(texto){
   return hojeBR();
 }
 
-// 🔥 NORMALIZA HORÁRIO (CORREÇÃO PRINCIPAL)
 function normalizarHorario(texto) {
   if (!texto) return null;
 
   const match = texto.match(/(\d{1,2})[:h](\d{2})/i);
-
   if (!match) return null;
 
   let h = match[1].padStart(2, "0");
@@ -133,17 +131,23 @@ async function scraper(url, banca) {
 
     $("table").each((i, tabela) => {
 
-      let titulo = $(tabela).prevAll("h2, h3, strong").first().text().trim();
-      if (!titulo) return;
+      // 🔥 PEGA TÍTULO CORRETO (CORREÇÃO PRINCIPAL)
+      let container = $(tabela).closest("div");
+
+      let titulo = container.find("h2, h3, strong, p").first().text().trim();
+
+      if (!titulo) {
+        titulo = $(tabela).prevAll("*").text();
+      }
 
       const tituloLower = titulo.toLowerCase();
 
       if (tituloLower.includes("federal") && tituloLower.includes("1 ao 10")) return;
 
-      // 🔥 horário robusto
+      // 🔥 HORÁRIO ROBUSTO
       let horarioReal = normalizarHorario(titulo);
 
-      // fallback se não encontrar
+      // 🔥 fallback por ordem
       if (!horarioReal && HORARIOS[banca]) {
         horarioReal = HORARIOS[banca][lista.length];
       }
@@ -157,8 +161,9 @@ async function scraper(url, banca) {
         if (matches) nums.push(...matches);
       });
 
-      // 🔥 pega apenas números válidos
-      const numeros = nums.filter(n => /^\d{4}$/.test(n)).slice(0, 5);
+      const numeros = nums
+        .filter(n => /^\d{4}$/.test(n))
+        .slice(0, 5);
 
       if (numeros.length < 5) {
         console.log("⚠️ incompleto:", titulo);
@@ -202,6 +207,7 @@ async function pegarTudo() {
     scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje", "nacional"),
     scraper("https://www.resultadofacil.com.br/resultado-banca-federal", "federal")
   ]);
+
   return { rio, look, nacional, federal };
 }
 
