@@ -25,7 +25,7 @@ function hojeBR() {
   const d = new Date().toLocaleString("en-CA", {
     timeZone: "America/Sao_Paulo"
   });
-  return d.split(",")[0]; // yyyy-mm-dd
+  return d.split(",")[0];
 }
 
 //////////////////////////////////////////////////
@@ -83,7 +83,21 @@ function extrairData(texto){
     const [d,m,a] = match[0].split("/");
     return `${a}-${m}-${d}`;
   }
-  return hojeBR(); // 🔥 usa Brasil
+  return hojeBR();
+}
+
+// 🔥 NORMALIZA HORÁRIO (CORREÇÃO PRINCIPAL)
+function normalizarHorario(texto) {
+  if (!texto) return null;
+
+  const match = texto.match(/(\d{1,2})[:h](\d{2})/i);
+
+  if (!match) return null;
+
+  let h = match[1].padStart(2, "0");
+  let m = match[2];
+
+  return `${h}:${m}`;
 }
 
 function detectarFaltantes(dados) {
@@ -98,7 +112,7 @@ function detectarFaltantes(dados) {
 }
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER (CORRIGIDO)
+// 🔍 SCRAPER CORRIGIDO
 //////////////////////////////////////////////////
 
 async function scraper(url, banca) {
@@ -126,8 +140,13 @@ async function scraper(url, banca) {
 
       if (tituloLower.includes("federal") && tituloLower.includes("1 ao 10")) return;
 
-      let horarioMatch = titulo.match(/\d{2}:\d{2}/);
-      let horarioReal = horarioMatch ? horarioMatch[0] : null;
+      // 🔥 horário robusto
+      let horarioReal = normalizarHorario(titulo);
+
+      // fallback se não encontrar
+      if (!horarioReal && HORARIOS[banca]) {
+        horarioReal = HORARIOS[banca][lista.length];
+      }
 
       if (banca === "federal") horarioReal = "19:00";
 
@@ -138,12 +157,19 @@ async function scraper(url, banca) {
         if (matches) nums.push(...matches);
       });
 
-      const numeros = nums.slice(0, 5);
-      if (numeros.length < 5) return;
+      // 🔥 pega apenas números válidos
+      const numeros = nums.filter(n => /^\d{4}$/.test(n)).slice(0, 5);
+
+      if (numeros.length < 5) {
+        console.log("⚠️ incompleto:", titulo);
+        return;
+      }
 
       const chave = `${banca}-${horarioReal}-${numeros.join("-")}`;
       if (vistos.has(chave)) return;
       vistos.add(chave);
+
+      console.log("📊", banca, horarioReal, numeros);
 
       lista.push({
         data: extrairData(titulo),
@@ -184,7 +210,6 @@ async function pegarTudo() {
 //////////////////////////////////////////////////
 
 async function salvarBanco(dados) {
-
   for (const banca in dados) {
     for (const item of dados[banca]) {
 
@@ -244,64 +269,22 @@ async function pegarHistorico() {
 }
 
 //////////////////////////////////////////////////
-// 🔁 RETRY
-//////////////////////////////////////////////////
-
-async function buscarFaltantesComRetry(max = 3) {
-
-  for (let i = 1; i <= max; i++) {
-
-    console.log(`🔁 Retry ${i}`);
-
-    const dados = await pegarTudo();
-    await salvarBanco(dados);
-
-    const faltando = detectarFaltantes(dados);
-
-    if (Object.keys(faltando).length === 0) {
-      console.log("✅ Completo");
-      return;
-    }
-
-    console.log("⚠️ Ainda faltando:", faltando);
-
-    await new Promise(r => setTimeout(r, 15000));
-  }
-}
-
-//////////////////////////////////////////////////
 // 🔄 ATUALIZAÇÃO
 //////////////////////////////////////////////////
 
-let atualizando = false;
-
 async function atualizar() {
+  console.log("⏳ Atualizando...", agoraBR());
 
-  if (atualizando) return;
-  atualizando = true;
+  const dados = await pegarTudo();
+  await salvarBanco(dados);
 
-  try {
+  const faltando = detectarFaltantes(dados);
 
-    console.log("⏳ Atualizando...", agoraBR());
-
-    const dados = await pegarTudo();
-
-    await salvarBanco(dados);
-
-    const faltando = detectarFaltantes(dados);
-
-    if (Object.keys(faltando).length > 0) {
-      console.log("⚠️ Faltando, tentando completar...");
-      await buscarFaltantesComRetry(3);
-    } else {
-      console.log("✅ Completo");
-    }
-
-  } catch (e) {
-    console.log("❌ erro atualizar:", e.message);
+  if (Object.keys(faltando).length > 0) {
+    console.log("⚠️ faltando:", faltando);
+  } else {
+    console.log("✅ completo");
   }
-
-  atualizando = false;
 }
 
 //////////////////////////////////////////////////
@@ -317,7 +300,6 @@ app.get("/resultados", async (req, res) => {
     const historico = await pegarHistorico();
 
     const hoje = hojeBR();
-
     const hojeDados = historico[hoje] || {};
 
     const faltando = detectarFaltantes(hojeDados);
@@ -329,6 +311,7 @@ app.get("/resultados", async (req, res) => {
     });
 
   } catch (err) {
+    console.log(err);
     res.status(500).json({ erro: "Erro no servidor" });
   }
 
