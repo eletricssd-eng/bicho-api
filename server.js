@@ -11,7 +11,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 //////////////////////////////////////////////////
-// 🇧🇷 TIMEZONE
+// 🇧🇷 TIMEZONE BRASIL
 //////////////////////////////////////////////////
 
 function agoraBR() {
@@ -34,7 +34,7 @@ function hojeBR() {
 
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ Mongo conectado"))
-  .catch(err => console.log(err));
+  .catch(err => console.log("❌ erro mongo:", err));
 
 //////////////////////////////////////////////////
 // 📦 MODEL
@@ -84,7 +84,7 @@ function detectarFaltantes(dados) {
 }
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER
+// 🔍 SCRAPER ROBUSTO
 //////////////////////////////////////////////////
 
 async function scraper(url, banca) {
@@ -96,7 +96,7 @@ async function scraper(url, banca) {
         "User-Agent": "Mozilla/5.0",
         "Cache-Control": "no-cache"
       },
-      timeout: 10000
+      timeout: 15000
     });
 
     const $ = cheerio.load(data);
@@ -107,13 +107,16 @@ async function scraper(url, banca) {
 
       let titulo = $(tabela).closest("div").text();
 
-      const horario = extrairHorario(titulo) || HORARIOS[banca][lista.length];
+      let horario = extrairHorario(titulo);
+
+      if (!horario && HORARIOS[banca]) {
+        horario = HORARIOS[banca][lista.length];
+      }
 
       if (!horario) return;
 
-      if (banca === "federal") {
-        if (lista.length > 0) return;
-      }
+      // 🔥 federal só 1 resultado
+      if (banca === "federal" && lista.length > 0) return;
 
       const nums = [];
 
@@ -151,7 +154,7 @@ async function scraper(url, banca) {
 }
 
 //////////////////////////////////////////////////
-// 🔄 ATUALIZAR
+// 🔄 ATUALIZAÇÃO
 //////////////////////////////////////////////////
 
 async function atualizar() {
@@ -179,18 +182,35 @@ async function atualizar() {
 
     }
   }
-
 }
 
 //////////////////////////////////////////////////
-// 📊 HISTÓRICO
+// 📊 BUSCAR HOJE (COM FALLBACK)
 //////////////////////////////////////////////////
 
-async function historicoHoje() {
+async function buscarResultados() {
 
   const hoje = hojeBR();
 
-  const dados = await Resultado.find({ data: hoje });
+  let dados = await Resultado.find({ data: hoje });
+
+  let dataUsada = hoje;
+  let origem = "hoje";
+
+  // 🔥 fallback automático
+  if (dados.length === 0) {
+
+    console.log("⚠️ Sem dados hoje, buscando anterior...");
+
+    const ultimo = await Resultado.findOne().sort({ data: -1 });
+
+    if (ultimo) {
+      dados = await Resultado.find({ data: ultimo.data });
+      dataUsada = ultimo.data;
+      origem = "anterior";
+    }
+
+  }
 
   const res = { rio: [], look: [], nacional: [], federal: [] };
 
@@ -205,29 +225,32 @@ async function historicoHoje() {
     });
   });
 
-  return res;
+  return { resultados: res, dataUsada, origem };
 }
 
 //////////////////////////////////////////////////
-// 🌐 ROTA
+// 🌐 ROTA PRINCIPAL
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req, res) => {
 
   try {
 
-    const hoje = await historicoHoje();
-    const faltando = detectarFaltantes(hoje);
+    const { resultados, dataUsada, origem } = await buscarResultados();
+
+    const faltando = detectarFaltantes(resultados);
 
     res.json({
       atualizado: agoraBR(),
-      dataReferencia: hojeBR(),
-      resultados: hoje,
+      dataReferencia: dataUsada,
+      origem,
+      resultados,
       faltando
     });
 
   } catch (e) {
-    res.status(500).json({ erro: "Erro" });
+    console.log(e);
+    res.status(500).json({ erro: "Erro servidor" });
   }
 
 });
@@ -246,5 +269,5 @@ atualizar();
 //////////////////////////////////////////////////
 
 app.listen(PORT, () => {
-  console.log("🚀 Rodando...");
+  console.log("🚀 API rodando na porta", PORT);
 });
