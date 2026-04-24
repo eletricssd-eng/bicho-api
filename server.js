@@ -85,7 +85,8 @@ async function scraper(url, banca) {
   try {
 
     const { data } = await axios.get(url, {
-      headers: { "User-Agent": "Mozilla/5.0" }
+      headers: { "User-Agent": "Mozilla/5.0" },
+      timeout: 10000
     });
 
     const $ = cheerio.load(data);
@@ -99,7 +100,6 @@ async function scraper(url, banca) {
 
       const tituloLower = titulo.toLowerCase();
 
-      // ignora federal duplicada
       if (tituloLower.includes("federal") && tituloLower.includes("1 ao 10")) return;
 
       const nums = [];
@@ -118,7 +118,6 @@ async function scraper(url, banca) {
       vistos.add(chave);
 
       const dataExtraida = extrairData(titulo);
-
       let horarioReal = extrairHorario(titulo);
 
       if (!horarioReal) {
@@ -147,20 +146,23 @@ async function scraper(url, banca) {
 }
 
 //////////////////////////////////////////////////
-// 🏦 PEGAR TODAS
+// 🏦 PEGAR TUDO (PARALELO)
 //////////////////////////////////////////////////
 
 async function pegarTudo() {
-  return {
-    rio: await scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje", "rio"),
-    look: await scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje", "look"),
-    nacional: await scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje", "nacional"),
-    federal: await scraper("https://www.resultadofacil.com.br/resultado-banca-federal", "federal")
-  };
+
+  const [rio, look, nacional, federal] = await Promise.all([
+    scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje", "rio"),
+    scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje", "look"),
+    scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje", "nacional"),
+    scraper("https://www.resultadofacil.com.br/resultado-banca-federal", "federal")
+  ]);
+
+  return { rio, look, nacional, federal };
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR BANCO
+// 💾 SALVAR
 //////////////////////////////////////////////////
 
 async function salvarBanco(dados) {
@@ -197,7 +199,7 @@ async function salvarBanco(dados) {
 }
 
 //////////////////////////////////////////////////
-// 📊 HISTÓRICO (FORMATO DO APP)
+// 📊 HISTÓRICO
 //////////////////////////////////////////////////
 
 async function pegarHistorico() {
@@ -242,16 +244,31 @@ async function pegarHistorico() {
 }
 
 //////////////////////////////////////////////////
-// 🔄 ATUALIZAÇÃO
+// 🔄 ATUALIZAÇÃO SEGURA
 //////////////////////////////////////////////////
 
-async function atualizar() {
-  console.log("⏳ Atualizando...");
-  const dados = await pegarTudo();
-  await salvarBanco(dados);
+let atualizando = false;
 
-  console.log("📊 LOOK:", dados.look.length);
-  console.log("📊 RIO:", dados.rio.length);
+async function atualizar() {
+
+  if (atualizando) return;
+  atualizando = true;
+
+  try {
+
+    console.log("⏳ Atualizando...");
+
+    const dados = await pegarTudo();
+    await salvarBanco(dados);
+
+    console.log("📊 LOOK:", dados.look.length);
+    console.log("📊 RIO:", dados.rio.length);
+
+  } catch (e) {
+    console.log("❌ erro atualizar:", e.message);
+  }
+
+  atualizando = false;
 }
 
 //////////////////////////////////////////////////
@@ -285,14 +302,13 @@ app.post("/login", async (req, res) => {
 });
 
 //////////////////////////////////////////////////
-// 🌐 ROTA PRINCIPAL
+// 🌐 ROTA PRINCIPAL (RÁPIDA)
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req, res) => {
 
   try {
 
-    await atualizar();
     const historico = await pegarHistorico();
 
     res.json({
@@ -311,7 +327,15 @@ app.get("/resultados", async (req, res) => {
 // 🔄 AUTO UPDATE
 //////////////////////////////////////////////////
 
-setInterval(atualizar, 5 * 60 * 1000);
+setInterval(atualizar, 3 * 60 * 1000);
+
+//////////////////////////////////////////////////
+// 🟢 PING (ANTI SLEEP)
+//////////////////////////////////////////////////
+
+app.get("/ping", (req, res) => {
+  res.send("ok");
+});
 
 //////////////////////////////////////////////////
 // 🚀 START

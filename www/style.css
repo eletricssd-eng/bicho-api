@@ -5,18 +5,19 @@
   padding: 0;
 }
 
+/* BASE */
 body {
   font-family: Arial, sans-serif;
   background: #eaf7ea;
   color: #000;
+  text-align: center; /* vem do segundo CSS */
 }
 
 /* TITULO */
 h1 {
   background: #2ecc71;
   color: #fff;
-  text-align: center;
-  padding: 12px;
+  padding: 15px;
   font-size: 18px;
 }
 
@@ -26,22 +27,25 @@ h1 {
   padding: 10px;
 }
 
-/* MENU */
+/* MENU (centralizado + scroll se precisar) */
 .menu {
   display: flex;
   gap: 6px;
+  justify-content: center;
   overflow-x: auto;
   padding: 8px;
   background: #1a1a1a;
+  margin: 10px;
 }
 
 .menu-btn {
-  min-width: 90px;
+  min-width: 70px;
   background: #3498db;
   color: #fff;
   border: none;
   padding: 8px;
   border-radius: 8px;
+  cursor: pointer;
 }
 
 .menu-btn.ativo {
@@ -54,18 +58,19 @@ h1 {
   justify-content: center;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
-  margin: 10px 0;
+  gap: 6px;
+  margin: 8px 0;
 }
 
 #bancasBox button {
-  padding: 8px 14px;
+  padding: 8px 10px;
   border-radius: 8px;
   border: none;
   font-weight: bold;
+  cursor: pointer;
 }
 
-/* 🔥 GRID PADRÃO (IGUAL TABELA) */
+/* GRID PADRÃO */
 .grid-5 {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
@@ -79,38 +84,39 @@ h1 {
   gap: 5px;
 }
 
+/* ITEM TABELA */
 .bicho {
   background: #fff;
   border-radius: 8px;
   text-align: center;
-  padding: 10px;
+  padding: 18px;
   font-size: 14px;
 }
 
 /* CARDS */
 .card {
   background: #fff;
+  padding: 14px;
+  margin: 5px;
   border-radius: 10px;
-  padding: 12px;
   font-size: 14px;
-  text-align: center;
 }
 
-/* 🔥 RESULTADOS (lado a lado) */
+/* RESULTADOS */
 #resultadosBox {
   display: grid;
-  grid-template-columns: repeat(2, 1fr); /* 2 colunas no celular */
-  gap: 10px;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 18px;
 }
 
-/* 🔥 ANALISE GRANDE */
+/* ANALISE */
 #analiseBox {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   gap: 10px;
 }
 
-/* 🔥 MAPA GRANDE */
+/* MAPA */
 #mapaGrid {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
