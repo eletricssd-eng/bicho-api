@@ -47,12 +47,16 @@ const ResultadoSchema = new mongoose.Schema({
 
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
-const UserSchema = new mongoose.Schema({
-  username: { type: String, unique: true },
-  password: String
-});
+//////////////////////////////////////////////////
+// 🧠 HORÁRIOS FIXOS (SOLUÇÃO DEFINITIVA)
+//////////////////////////////////////////////////
 
-const User = mongoose.model("User", UserSchema);
+const HORARIOS = {
+  rio: ["09:20","11:00","14:20","16:00","21:20"],
+  look: ["07:00","09:00","11:00","14:00","16:00","18:00","21:00","23:00"],
+  nacional: ["02:00","08:00","10:00","12:00","15:00","17:00","20:00","23:00"],
+  federal: ["19:00"]
+};
 
 //////////////////////////////////////////////////
 // 🧠 FUNÇÕES AUXILIARES
@@ -67,17 +71,12 @@ function extrairData(texto){
   return new Date().toISOString().split("T")[0];
 }
 
-function extrairHorario(texto) {
-  const match = texto.match(/\d{2}:\d{2}/);
-  return match ? match[0] : null;
-}
-
 function numerosValidos(nums){
   return nums.length >= 5 && nums.every(n => /^\d{4}$/.test(n));
 }
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER
+// 🔍 SCRAPER (CORRIGIDO)
 //////////////////////////////////////////////////
 
 async function scraper(url, banca) {
@@ -100,6 +99,7 @@ async function scraper(url, banca) {
 
       const tituloLower = titulo.toLowerCase();
 
+      // ignora federal duplicada
       if (tituloLower.includes("federal") && tituloLower.includes("1 ao 10")) return;
 
       const nums = [];
@@ -118,12 +118,21 @@ async function scraper(url, banca) {
       vistos.add(chave);
 
       const dataExtraida = extrairData(titulo);
-      let horarioReal = extrairHorario(titulo);
 
-      if (!horarioReal) {
-        if (banca === "federal") horarioReal = "19:00";
-        else return;
+      //////////////////////////////////////////////////
+      // 🔥 HORÁRIO FIXO (AQUI ESTÁ A CORREÇÃO)
+      //////////////////////////////////////////////////
+
+      let horarioReal;
+
+      if (banca === "federal") {
+        if (lista.length >= 1) return; // trava duplicado
+        horarioReal = "19:00";
+      } else {
+        horarioReal = HORARIOS[banca][lista.length];
       }
+
+      if (!horarioReal) return;
 
       lista.push({
         data: dataExtraida,
@@ -170,8 +179,6 @@ async function salvarBanco(dados) {
   for (const banca in dados) {
 
     for (const item of dados[banca]) {
-
-      if (!item.horario) continue;
 
       const uniqueId = `${banca}-${item.data}-${item.horario}-${item.p1}`;
 
@@ -255,15 +262,9 @@ async function atualizar() {
   atualizando = true;
 
   try {
-
     console.log("⏳ Atualizando...");
-
     const dados = await pegarTudo();
     await salvarBanco(dados);
-
-    console.log("📊 LOOK:", dados.look.length);
-    console.log("📊 RIO:", dados.rio.length);
-
   } catch (e) {
     console.log("❌ erro atualizar:", e.message);
   }
@@ -272,37 +273,7 @@ async function atualizar() {
 }
 
 //////////////////////////////////////////////////
-// 🔐 LOGIN
-//////////////////////////////////////////////////
-
-app.post("/register", async (req, res) => {
-  const { username, password } = req.body;
-
-  const hash = await bcrypt.hash(password, 10);
-
-  await User.create({ username, password: hash });
-
-  res.json({ ok: true });
-});
-
-app.post("/login", async (req, res) => {
-  const { username, password } = req.body;
-
-  const user = await User.findOne({ username });
-  if (!user) return res.status(400).json({ erro: "Usuário não existe" });
-
-  const ok = await bcrypt.compare(password, user.password);
-  if (!ok) return res.status(400).json({ erro: "Senha inválida" });
-
-  const token = jwt.sign({ id: user._id }, SECRET, {
-    expiresIn: "7d"
-  });
-
-  res.json({ token });
-});
-
-//////////////////////////////////////////////////
-// 🌐 ROTA PRINCIPAL (RÁPIDA)
+// 🌐 ROTA
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req, res) => {
@@ -328,14 +299,6 @@ app.get("/resultados", async (req, res) => {
 //////////////////////////////////////////////////
 
 setInterval(atualizar, 3 * 60 * 1000);
-
-//////////////////////////////////////////////////
-// 🟢 PING (ANTI SLEEP)
-//////////////////////////////////////////////////
-
-app.get("/ping", (req, res) => {
-  res.send("ok");
-});
 
 //////////////////////////////////////////////////
 // 🚀 START
