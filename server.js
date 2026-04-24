@@ -11,6 +11,24 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 //////////////////////////////////////////////////
+// 🇧🇷 TIMEZONE BRASIL
+//////////////////////////////////////////////////
+
+function agoraBR() {
+  return new Date().toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    hour12: false
+  });
+}
+
+function hojeBR() {
+  const d = new Date().toLocaleString("en-CA", {
+    timeZone: "America/Sao_Paulo"
+  });
+  return d.split(",")[0]; // yyyy-mm-dd
+}
+
+//////////////////////////////////////////////////
 // 🔗 MONGO
 //////////////////////////////////////////////////
 
@@ -45,7 +63,7 @@ const ResultadoSchema = new mongoose.Schema({
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
-// 🧠 HORÁRIOS ESPERADOS
+// 🧠 HORÁRIOS
 //////////////////////////////////////////////////
 
 const HORARIOS = {
@@ -65,7 +83,7 @@ function extrairData(texto){
     const [d,m,a] = match[0].split("/");
     return `${a}-${m}-${d}`;
   }
-  return new Date().toISOString().split("T")[0];
+  return hojeBR(); // 🔥 usa Brasil
 }
 
 function detectarFaltantes(dados) {
@@ -80,7 +98,7 @@ function detectarFaltantes(dados) {
 }
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER CORRIGIDO (🔥 PRINCIPAL)
+// 🔍 SCRAPER (CORRIGIDO)
 //////////////////////////////////////////////////
 
 async function scraper(url, banca) {
@@ -108,7 +126,6 @@ async function scraper(url, banca) {
 
       if (tituloLower.includes("federal") && tituloLower.includes("1 ao 10")) return;
 
-      // 🔥 pega horário real do texto
       let horarioMatch = titulo.match(/\d{2}:\d{2}/);
       let horarioReal = horarioMatch ? horarioMatch[0] : null;
 
@@ -153,14 +170,12 @@ async function scraper(url, banca) {
 //////////////////////////////////////////////////
 
 async function pegarTudo() {
-
   const [rio, look, nacional, federal] = await Promise.all([
     scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje", "rio"),
     scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje", "look"),
     scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje", "nacional"),
     scraper("https://www.resultadofacil.com.br/resultado-banca-federal", "federal")
   ]);
-
   return { rio, look, nacional, federal };
 }
 
@@ -229,7 +244,7 @@ async function pegarHistorico() {
 }
 
 //////////////////////////////////////////////////
-// 🔁 RETRY AUTOMÁTICO
+// 🔁 RETRY
 //////////////////////////////////////////////////
 
 async function buscarFaltantesComRetry(max = 3) {
@@ -244,7 +259,7 @@ async function buscarFaltantesComRetry(max = 3) {
     const faltando = detectarFaltantes(dados);
 
     if (Object.keys(faltando).length === 0) {
-      console.log("✅ Completou tudo");
+      console.log("✅ Completo");
       return;
     }
 
@@ -267,7 +282,7 @@ async function atualizar() {
 
   try {
 
-    console.log("⏳ Atualizando...");
+    console.log("⏳ Atualizando...", agoraBR());
 
     const dados = await pegarTudo();
 
@@ -297,15 +312,18 @@ app.get("/resultados", async (req, res) => {
 
   try {
 
+    await atualizar();
+
     const historico = await pegarHistorico();
 
-    const hoje = new Date().toISOString().split("T")[0];
+    const hoje = hojeBR();
+
     const hojeDados = historico[hoje] || {};
 
     const faltando = detectarFaltantes(hojeDados);
 
     res.json({
-      atualizado: new Date().toLocaleString(),
+      atualizado: agoraBR(),
       historico,
       faltando
     });
@@ -320,7 +338,7 @@ app.get("/resultados", async (req, res) => {
 // 🔄 AUTO UPDATE
 //////////////////////////////////////////////////
 
-setInterval(atualizar, 60 * 1000); // 1 minuto
+setInterval(atualizar, 60 * 1000);
 
 //////////////////////////////////////////////////
 // 🚀 START
