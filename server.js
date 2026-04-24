@@ -45,7 +45,7 @@ const ResultadoSchema = new mongoose.Schema({
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
-// 🧠 HORÁRIOS FIXOS
+// 🧠 HORÁRIOS ESPERADOS
 //////////////////////////////////////////////////
 
 const HORARIOS = {
@@ -56,7 +56,7 @@ const HORARIOS = {
 };
 
 //////////////////////////////////////////////////
-// 🧠 FUNÇÕES
+// 🧠 HELPERS
 //////////////////////////////////////////////////
 
 function extrairData(texto){
@@ -68,21 +68,31 @@ function extrairData(texto){
   return new Date().toISOString().split("T")[0];
 }
 
-function numerosValidos(nums){
-  return nums.length >= 5 && nums.every(n => /^\d{4}$/.test(n));
+function detectarFaltantes(dados) {
+  const faltando = {};
+  for (const banca in HORARIOS) {
+    const esperados = HORARIOS[banca];
+    const recebidos = (dados[banca] || []).map(i => i.horario);
+    const faltantes = esperados.filter(h => !recebidos.includes(h));
+    if (faltantes.length > 0) faltando[banca] = faltantes;
+  }
+  return faltando;
 }
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER
+// 🔍 SCRAPER CORRIGIDO (🔥 PRINCIPAL)
 //////////////////////////////////////////////////
 
 async function scraper(url, banca) {
 
   try {
 
-    const { data } = await axios.get(url, {
-      headers: { "User-Agent": "Mozilla/5.0" },
-      timeout: 10000
+    const { data } = await axios.get(url + "?t=" + Date.now(), {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        "Cache-Control": "no-cache"
+      },
+      timeout: 15000
     });
 
     const $ = cheerio.load(data);
@@ -98,6 +108,12 @@ async function scraper(url, banca) {
 
       if (tituloLower.includes("federal") && tituloLower.includes("1 ao 10")) return;
 
+      // 🔥 pega horário real do texto
+      let horarioMatch = titulo.match(/\d{2}:\d{2}/);
+      let horarioReal = horarioMatch ? horarioMatch[0] : null;
+
+      if (banca === "federal") horarioReal = "19:00";
+
       const nums = [];
 
       $(tabela).find("tr").each((i, tr) => {
@@ -106,27 +122,14 @@ async function scraper(url, banca) {
       });
 
       const numeros = nums.slice(0, 5);
-      if (!numerosValidos(numeros)) return;
+      if (numeros.length < 5) return;
 
-      const chave = numeros.join("-");
+      const chave = `${banca}-${horarioReal}-${numeros.join("-")}`;
       if (vistos.has(chave)) return;
       vistos.add(chave);
 
-      const dataExtraida = extrairData(titulo);
-
-      let horarioReal;
-
-      if (banca === "federal") {
-        if (lista.length >= 1) return;
-        horarioReal = "19:00";
-      } else {
-        horarioReal = HORARIOS[banca][lista.length];
-      }
-
-      if (!horarioReal) return;
-
       lista.push({
-        data: dataExtraida,
+        data: extrairData(titulo),
         horario: horarioReal,
         p1: numeros[0],
         p2: numeros[1],
@@ -146,7 +149,7 @@ async function scraper(url, banca) {
 }
 
 //////////////////////////////////////////////////
-// 🏦 PEGAR TUDO
+// 🏦 PEGAR TODAS
 //////////////////////////////////////////////////
 
 async function pegarTudo() {
@@ -162,56 +165,6 @@ async function pegarTudo() {
 }
 
 //////////////////////////////////////////////////
-// 🔥 DETECTAR FALTANTES
-//////////////////////////////////////////////////
-
-function detectarFaltantes(dados) {
-
-  const faltando = {};
-
-  for (const banca in HORARIOS) {
-    const esperados = HORARIOS[banca];
-    const recebidos = (dados[banca] || []).map(i => i.horario);
-
-    const faltantes = esperados.filter(h => !recebidos.includes(h));
-
-    if (faltantes.length > 0) {
-      faltando[banca] = faltantes;
-    }
-  }
-
-  return faltando;
-}
-
-//////////////////////////////////////////////////
-// 🔥 RETRY AUTOMÁTICO
-//////////////////////////////////////////////////
-
-async function buscarFaltantesComRetry(maxTentativas = 3) {
-
-  for (let tentativa = 1; tentativa <= maxTentativas; tentativa++) {
-
-    console.log(`🔁 Tentativa ${tentativa}`);
-
-    const dados = await pegarTudo();
-    const faltando = detectarFaltantes(dados);
-
-    await salvarBanco(dados);
-
-    if (Object.keys(faltando).length === 0) {
-      console.log("✅ Completou tudo");
-      return;
-    }
-
-    console.log("⚠️ Ainda faltando:", faltando);
-
-    await new Promise(r => setTimeout(r, 15000));
-  }
-
-  console.log("❌ Ainda incompleto");
-}
-
-//////////////////////////////////////////////////
 // 💾 SALVAR
 //////////////////////////////////////////////////
 
@@ -219,6 +172,8 @@ async function salvarBanco(dados) {
 
   for (const banca in dados) {
     for (const item of dados[banca]) {
+
+      if (!item.horario) continue;
 
       const uniqueId = `${banca}-${item.data}-${item.horario}-${item.p1}`;
 
@@ -271,6 +226,32 @@ async function pegarHistorico() {
   });
 
   return agrupado;
+}
+
+//////////////////////////////////////////////////
+// 🔁 RETRY AUTOMÁTICO
+//////////////////////////////////////////////////
+
+async function buscarFaltantesComRetry(max = 3) {
+
+  for (let i = 1; i <= max; i++) {
+
+    console.log(`🔁 Retry ${i}`);
+
+    const dados = await pegarTudo();
+    await salvarBanco(dados);
+
+    const faltando = detectarFaltantes(dados);
+
+    if (Object.keys(faltando).length === 0) {
+      console.log("✅ Completou tudo");
+      return;
+    }
+
+    console.log("⚠️ Ainda faltando:", faltando);
+
+    await new Promise(r => setTimeout(r, 15000));
+  }
 }
 
 //////////////////////////////////////////////////
@@ -339,7 +320,7 @@ app.get("/resultados", async (req, res) => {
 // 🔄 AUTO UPDATE
 //////////////////////////////////////////////////
 
-setInterval(atualizar, 2 * 60 * 1000);
+setInterval(atualizar, 60 * 1000); // 1 minuto
 
 //////////////////////////////////////////////////
 // 🚀 START
