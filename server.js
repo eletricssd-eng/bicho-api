@@ -21,13 +21,6 @@ function agoraBR() {
   });
 }
 
-function hojeBR() {
-  const d = new Date().toLocaleString("en-CA", {
-    timeZone: "America/Sao_Paulo"
-  });
-  return d.split(",")[0];
-}
-
 //////////////////////////////////////////////////
 // 🔗 MONGO
 //////////////////////////////////////////////////
@@ -83,7 +76,7 @@ function extrairData(texto){
     const [d,m,a] = match[0].split("/");
     return `${a}-${m}-${d}`;
   }
-  return hojeBR();
+  return new Date().toISOString().split("T")[0];
 }
 
 function normalizarHorario(texto) {
@@ -131,7 +124,7 @@ async function scraper(url, banca) {
 
     $("table").each((i, tabela) => {
 
-      // 🔥 PEGA TÍTULO CORRETO (CORREÇÃO PRINCIPAL)
+      // 🔥 pega título correto
       let container = $(tabela).closest("div");
 
       let titulo = container.find("h2, h3, strong, p").first().text().trim();
@@ -142,17 +135,20 @@ async function scraper(url, banca) {
 
       const tituloLower = titulo.toLowerCase();
 
+      // ignora federal duplicada
       if (tituloLower.includes("federal") && tituloLower.includes("1 ao 10")) return;
 
-      // 🔥 HORÁRIO ROBUSTO
+      // 🔥 horário robusto
       let horarioReal = normalizarHorario(titulo);
 
-      // 🔥 fallback por ordem
       if (!horarioReal && HORARIOS[banca]) {
         horarioReal = HORARIOS[banca][lista.length];
       }
 
-      if (banca === "federal") horarioReal = "19:00";
+      if (banca === "federal") {
+        horarioReal = "19:00";
+        if (lista.length >= 1) return; // evita duplicado
+      }
 
       const nums = [];
 
@@ -283,18 +279,10 @@ async function atualizar() {
 
   const dados = await pegarTudo();
   await salvarBanco(dados);
-
-  const faltando = detectarFaltantes(dados);
-
-  if (Object.keys(faltando).length > 0) {
-    console.log("⚠️ faltando:", faltando);
-  } else {
-    console.log("✅ completo");
-  }
 }
 
 //////////////////////////////////////////////////
-// 🌐 ROTA
+// 🌐 ROTA PRINCIPAL
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req, res) => {
@@ -305,13 +293,17 @@ app.get("/resultados", async (req, res) => {
 
     const historico = await pegarHistorico();
 
-    const hoje = hojeBR();
-    const hojeDados = historico[hoje] || {};
+    // 🔥 pega última data REAL
+    const datas = Object.keys(historico);
+    const ultimaData = datas.sort().reverse()[0];
+
+    const hojeDados = historico[ultimaData] || {};
 
     const faltando = detectarFaltantes(hojeDados);
 
     res.json({
       atualizado: agoraBR(),
+      dataReferencia: ultimaData,
       historico,
       faltando
     });
