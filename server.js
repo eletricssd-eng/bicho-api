@@ -73,30 +73,6 @@ function numerosValidos(nums){
 }
 
 //////////////////////////////////////////////////
-// 🔥 DETECTAR FALTANTES
-//////////////////////////////////////////////////
-
-function detectarFaltantes(dados) {
-
-  const faltando = {};
-
-  for (const banca in HORARIOS) {
-
-    const esperados = HORARIOS[banca];
-    const recebidos = (dados[banca] || []).map(i => i.horario);
-
-    const faltantes = esperados.filter(h => !recebidos.includes(h));
-
-    if (faltantes.length > 0) {
-      faltando[banca] = faltantes;
-    }
-
-  }
-
-  return faltando;
-}
-
-//////////////////////////////////////////////////
 // 🔍 SCRAPER
 //////////////////////////////////////////////////
 
@@ -186,6 +162,56 @@ async function pegarTudo() {
 }
 
 //////////////////////////////////////////////////
+// 🔥 DETECTAR FALTANTES
+//////////////////////////////////////////////////
+
+function detectarFaltantes(dados) {
+
+  const faltando = {};
+
+  for (const banca in HORARIOS) {
+    const esperados = HORARIOS[banca];
+    const recebidos = (dados[banca] || []).map(i => i.horario);
+
+    const faltantes = esperados.filter(h => !recebidos.includes(h));
+
+    if (faltantes.length > 0) {
+      faltando[banca] = faltantes;
+    }
+  }
+
+  return faltando;
+}
+
+//////////////////////////////////////////////////
+// 🔥 RETRY AUTOMÁTICO
+//////////////////////////////////////////////////
+
+async function buscarFaltantesComRetry(maxTentativas = 3) {
+
+  for (let tentativa = 1; tentativa <= maxTentativas; tentativa++) {
+
+    console.log(`🔁 Tentativa ${tentativa}`);
+
+    const dados = await pegarTudo();
+    const faltando = detectarFaltantes(dados);
+
+    await salvarBanco(dados);
+
+    if (Object.keys(faltando).length === 0) {
+      console.log("✅ Completou tudo");
+      return;
+    }
+
+    console.log("⚠️ Ainda faltando:", faltando);
+
+    await new Promise(r => setTimeout(r, 15000));
+  }
+
+  console.log("❌ Ainda incompleto");
+}
+
+//////////////////////////////////////////////////
 // 💾 SALVAR
 //////////////////////////////////////////////////
 
@@ -264,14 +290,16 @@ async function atualizar() {
 
     const dados = await pegarTudo();
 
-    // 🔥 DETECTA FALTANTES
+    await salvarBanco(dados);
+
     const faltando = detectarFaltantes(dados);
 
     if (Object.keys(faltando).length > 0) {
-      console.log("⚠️ FALTANDO:", faltando);
+      console.log("⚠️ Faltando, tentando completar...");
+      await buscarFaltantesComRetry(3);
+    } else {
+      console.log("✅ Completo");
     }
-
-    await salvarBanco(dados);
 
   } catch (e) {
     console.log("❌ erro atualizar:", e.message);
@@ -311,7 +339,7 @@ app.get("/resultados", async (req, res) => {
 // 🔄 AUTO UPDATE
 //////////////////////////////////////////////////
 
-setInterval(atualizar, 3 * 60 * 1000);
+setInterval(atualizar, 2 * 60 * 1000);
 
 //////////////////////////////////////////////////
 // 🚀 START
