@@ -11,7 +11,7 @@ app.use(express.json());
 const PORT = 3000;
 const FILE = "dados.json";
 
-// ================= LOGIN SIMPLES =================
+// ================= LOGIN =================
 app.post("/login", (req, res) => {
   const { username, password } = req.body;
 
@@ -22,7 +22,7 @@ app.post("/login", (req, res) => {
   res.json({ erro: "Login inválido" });
 });
 
-// ================= LER JSON =================
+// ================= BANCO LOCAL =================
 function lerDados() {
   if (!fs.existsSync(FILE)) {
     return { atualizado: "", historico: {} };
@@ -30,55 +30,90 @@ function lerDados() {
   return JSON.parse(fs.readFileSync(FILE));
 }
 
-// ================= SALVAR JSON =================
 function salvarDados(dados) {
   fs.writeFileSync(FILE, JSON.stringify(dados, null, 2));
 }
 
-// ================= FORMATAR DATA =================
+// ================= DATA =================
 function getHoje() {
   const d = new Date();
   return d.toISOString().split("T")[0];
 }
 
-// ================= SCRAPING REAL =================
-async function pegarResultados() {
+// ================= SCRAPING FEDERAL =================
+async function pegarFederal() {
   try {
-    const { data } = await axios.get("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje");
+    const url = "https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje";
+
+    const { data } = await axios.get(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0"
+      }
+    });
 
     const $ = cheerio.load(data);
 
     let resultados = [];
 
-    $(".lottery-table tbody tr").each((i, el) => {
-      const cols = $(el).find("td");
+    // 🔥 seletor atualizado
+    $("table tr").each((i, el) => {
 
-      if (cols.length >= 6) {
-        resultados.push({
-          horario: "19:00",
-          p1: $(cols[1]).text().trim(),
-          p2: $(cols[2]).text().trim(),
-          p3: $(cols[3]).text().trim(),
-          p4: $(cols[4]).text().trim(),
-          p5: $(cols[5]).text().trim()
-        });
+      const tds = $(el).find("td");
+
+      if (tds.length >= 6) {
+
+        const p1 = $(tds[1]).text().trim();
+        const p2 = $(tds[2]).text().trim();
+        const p3 = $(tds[3]).text().trim();
+        const p4 = $(tds[4]).text().trim();
+        const p5 = $(tds[5]).text().trim();
+
+        // só adiciona se válido
+        if (p1 && p2 && p3) {
+          resultados.push({
+            horario: "19:00",
+            p1,
+            p2,
+            p3,
+            p4,
+            p5
+          });
+        }
       }
     });
+
+    console.log("📡 Federal capturado:", resultados.length);
 
     return resultados;
 
   } catch (e) {
-    console.log("Erro scraping:", e.message);
+    console.log("❌ erro scraping:", e.message);
     return [];
   }
 }
 
-// ================= ATUALIZAR =================
+// ================= FALLBACK =================
+function pegarUltimoFederal(dados) {
+  const datas = Object.keys(dados.historico)
+    .sort((a,b)=> new Date(b) - new Date(a));
+
+  for (let d of datas) {
+    const fed = dados.historico[d]?.federal;
+    if (fed && fed.length > 0) {
+      return fed;
+    }
+  }
+
+  return [];
+}
+
+// ================= ATUALIZAÇÃO =================
 async function atualizar() {
 
   const dados = lerDados();
   const hoje = getHoje();
 
+  // 🔥 cria dia só se precisar
   if (!dados.historico[hoje]) {
     dados.historico[hoje] = {
       rio: [],
@@ -88,25 +123,31 @@ async function atualizar() {
     };
   }
 
-  const novosFederal = await pegarResultados();
+  let federal = await pegarFederal();
 
-  // 🔥 SÓ ATUALIZA SE TIVER DADOS
-  if (novosFederal.length > 0) {
-    dados.historico[hoje].federal = novosFederal;
+  // 🔥 se scraping falhar, usa fallback
+  if (federal.length === 0) {
+    console.log("⚠️ usando fallback");
+    federal = pegarUltimoFederal(dados);
+  }
+
+  // 🔥 só salva se tiver algo
+  if (federal.length > 0) {
+    dados.historico[hoje].federal = federal;
   }
 
   dados.atualizado = new Date().toLocaleString("pt-BR");
 
   salvarDados(dados);
 
-  console.log("Atualizado:", dados.atualizado);
+  console.log("✅ atualizado:", dados.atualizado);
 }
 
 // ================= AUTO UPDATE =================
 setInterval(atualizar, 60000); // 1 min
 atualizar();
 
-// ================= ROTA =================
+// ================= ROTAS =================
 app.get("/resultados", (req, res) => {
   const dados = lerDados();
   res.json(dados);
@@ -114,5 +155,5 @@ app.get("/resultados", (req, res) => {
 
 // ================= START =================
 app.listen(PORT, () => {
-  console.log("API rodando na porta", PORT);
+  console.log("🚀 API rodando na porta", PORT);
 });
