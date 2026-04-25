@@ -11,7 +11,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 //////////////////////////////////////////////////
-// 🇧🇷 TIMEZONE BRASIL
+// 🇧🇷 DATA BR
 //////////////////////////////////////////////////
 
 function agoraBR() {
@@ -33,20 +33,11 @@ function hojeBR() {
 //////////////////////////////////////////////////
 
 mongoose.connect(process.env.MONGO_URI)
-  .then(async () => {
-    console.log("✅ Mongo conectado");
-
-    // índice único (evita duplicação)
-    await Resultado.collection.createIndex({ uniqueId: 1 }, { unique: true });
-  })
+  .then(() => console.log("✅ Mongo conectado"))
   .catch(err => console.log("❌ erro mongo:", err));
 
-//////////////////////////////////////////////////
-// 📦 MODEL
-//////////////////////////////////////////////////
-
 const Resultado = mongoose.model("Resultado", {
-  uniqueId: { type: String, unique: true },
+  uniqueId: String,
   data: String,
   banca: String,
   horario: String,
@@ -69,76 +60,20 @@ const HORARIOS = {
 };
 
 //////////////////////////////////////////////////
-// 🔁 RETRY
-//////////////////////////////////////////////////
-
-async function tentar(fn, tentativas = 3) {
-  for (let i = 0; i < tentativas; i++) {
-    try {
-      return await fn();
-    } catch (e) {
-      if (i === tentativas - 1) throw e;
-      await new Promise(r => setTimeout(r, 1000));
-    }
-  }
-}
-
-//////////////////////////////////////////////////
-// 🧠 HELPERS
-//////////////////////////////////////////////////
-
-function extrairHorario(texto) {
-  const m = texto.match(/(\d{1,2})[:h](\d{2})/);
-  if (!m) return null;
-  return `${m[1].padStart(2,"0")}:${m[2]}`;
-}
-
-function detectarFaltantes(dados) {
-  const faltando = {};
-  for (const banca in HORARIOS) {
-    const recebidos = (dados[banca] || []).map(i => i.horario);
-    const diff = HORARIOS[banca].filter(h => !recebidos.includes(h));
-    if (diff.length) faltando[banca] = diff;
-  }
-  return faltando;
-}
-
-//////////////////////////////////////////////////
-// 🔍 SCRAPER PROFISSIONAL
+// 🔍 SCRAPER
 //////////////////////////////////////////////////
 
 async function scraper(url, banca) {
-
   try {
-
-    const { data } = await tentar(() =>
-      axios.get(url + "?nocache=" + Date.now(), {
-        headers: {
-          "User-Agent": "Mozilla/5.0",
-          "Cache-Control": "no-cache"
-        },
-        timeout: 10000
-      })
-    );
-
+    const { data } = await axios.get(url);
     const $ = cheerio.load(data);
+
     const lista = [];
-    const vistos = new Set();
 
     $("table").each((i, tabela) => {
 
-      let titulo = $(tabela).closest("div").text();
-      let horario = extrairHorario(titulo);
-
-      // fallback mais seguro
-      if (!horario && HORARIOS[banca]) {
-        horario = HORARIOS[banca][i];
-      }
-
+      let horario = HORARIOS[banca]?.[i];
       if (!horario) return;
-
-      // federal só 1
-      if (banca === "federal" && lista.length >= 1) return;
 
       const nums = [];
 
@@ -147,23 +82,16 @@ async function scraper(url, banca) {
         if (m) nums.push(...m);
       });
 
-      const numeros = nums.slice(0, 5);
-
-      if (numeros.length < 5) return;
-      if (numeros.some(n => n === "0000")) return;
-
-      const chave = `${banca}-${horario}-${numeros.join("-")}`;
-      if (vistos.has(chave)) return;
-      vistos.add(chave);
+      if (nums.length < 5) return;
 
       lista.push({
         data: hojeBR(),
         horario,
-        p1: numeros[0],
-        p2: numeros[1],
-        p3: numeros[2],
-        p4: numeros[3],
-        p5: numeros[4]
+        p1: nums[0],
+        p2: nums[1],
+        p3: nums[2],
+        p4: nums[3],
+        p5: nums[4]
       });
 
     });
@@ -177,10 +105,11 @@ async function scraper(url, banca) {
 }
 
 //////////////////////////////////////////////////
-// 🔄 ATUALIZAÇÃO
+// 🔄 ATUALIZAR
 //////////////////////////////////////////////////
 
 async function atualizar() {
+
   console.log("⏳ Atualizando...", agoraBR());
 
   const [rio, look, nacional, federal] = await Promise.all([
@@ -193,6 +122,7 @@ async function atualizar() {
   const dados = { rio, look, nacional, federal };
 
   for (const banca in dados) {
+
     for (const item of dados[banca]) {
 
       const id = `${banca}-${item.data}-${item.horario}-${item.p1}-${item.p2}-${item.p3}-${item.p4}-${item.p5}`;
@@ -203,87 +133,87 @@ async function atualizar() {
         { upsert: true }
       );
 
-      console.log(`✅ ${banca} ${item.horario} salvo`);
     }
   }
 }
 
 //////////////////////////////////////////////////
-// 📊 BUSCAR
+// 📊 FORMATAR PRO APP
 //////////////////////////////////////////////////
 
-async function buscarResultados() {
-
-  const hoje = hojeBR();
-  let dados = await Resultado.find({ data: hoje });
-
-  let dataUsada = hoje;
-  let origem = "hoje";
-
-  // fallback automático
-  if (dados.length === 0) {
-
-    console.log("⚠️ fallback ativado");
-
-    const ultimo = await Resultado.findOne().sort({ data: -1 });
-
-    if (ultimo) {
-      dados = await Resultado.find({ data: ultimo.data });
-      dataUsada = ultimo.data;
-      origem = "anterior";
-    }
-  }
-
-  const res = { rio: [], look: [], nacional: [], federal: [] };
-
-  dados.forEach(r => {
-    res[r.banca].push({
-      horario: r.horario,
-      p1: r.p1,
-      p2: r.p2,
-      p3: r.p3,
-      p4: r.p4,
-      p5: r.p5
-    });
-  });
-
-  // ordena
-  for (const banca in res) {
-    res[banca].sort((a, b) => a.horario.localeCompare(b.horario));
-  }
-
-  return { resultados: res, dataUsada, origem };
+function estruturaVazia() {
+  return {
+    rio: [],
+    look: [],
+    nacional: [],
+    federal: []
+  };
 }
 
 //////////////////////////////////////////////////
-// 🌐 ROTA
+// 📊 ROTA PRINCIPAL
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req, res) => {
+
   try {
 
-    const { resultados, dataUsada, origem } = await buscarResultados();
-    const faltando = detectarFaltantes(resultados);
+    const hoje = hojeBR();
+
+    let dados = await Resultado.find({ data: hoje });
+
+    if (!dados.length) {
+      const ultimo = await Resultado.findOne().sort({ data: -1 });
+      if (ultimo) {
+        dados = await Resultado.find({ data: ultimo.data });
+      }
+    }
+
+    const resultados = estruturaVazia();
+
+    dados.forEach(r => {
+      resultados[r.banca].push({
+        horario: r.horario,
+        p1: r.p1,
+        p2: r.p2,
+        p3: r.p3,
+        p4: r.p4,
+        p5: r.p5
+      });
+    });
+
+    // ordenar
+    for (const banca in resultados) {
+      resultados[banca].sort((a, b) =>
+        a.horario.localeCompare(b.horario)
+      );
+    }
 
     res.json({
       atualizado: agoraBR(),
-      dataReferencia: dataUsada,
-      origem,
-      resultados,
-      faltando
+      resultados
     });
 
   } catch (e) {
-    console.log(e);
-    res.status(500).json({ erro: "Erro servidor" });
+    res.json({
+      atualizado: agoraBR(),
+      resultados: estruturaVazia()
+    });
   }
+
 });
 
 //////////////////////////////////////////////////
-// 🔄 AUTO UPDATE
+// 🔄 LOOP
 //////////////////////////////////////////////////
 
-setInterval(atualizar, 180000); // 3 minutos
+setInterval(async () => {
+  try {
+    await atualizar();
+  } catch (e) {
+    console.log("❌ erro loop");
+  }
+}, 180000);
 
 atualizar();
 
@@ -292,5 +222,5 @@ atualizar();
 //////////////////////////////////////////////////
 
 app.listen(PORT, () => {
-  console.log("🚀 API rodando na porta", PORT);
+  console.log("🚀 API rodando");
 });
