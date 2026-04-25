@@ -13,10 +13,13 @@ const PORT = process.env.PORT || 3000;
 // 🔥 MONGO
 const MONGO_URL = process.env.MONGO_URL;
 
-mongoose.connect(MONGO_URL)
-.then(()=> console.log("✅ Mongo conectado"))
-.catch(err => console.log("❌ erro mongo:", err));
-
+if(!MONGO_URL){
+  console.log("❌ MONGO_URL NÃO DEFINIDA");
+}else{
+  mongoose.connect(MONGO_URL)
+    .then(()=> console.log("✅ Mongo conectado"))
+    .catch(err => console.log("❌ erro mongo:", err));
+}
 // 📦 MODEL
 const ResultadoSchema = new mongoose.Schema({
   data: String,
