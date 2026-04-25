@@ -56,17 +56,6 @@ const Resultado = mongoose.model("Resultado", {
 });
 
 //////////////////////////////////////////////////
-// 🧠 HORÁRIOS
-//////////////////////////////////////////////////
-
-const HORARIOS = {
-  rio: ["09:20","11:00","14:20","16:00","21:20"],
-  look: ["07:00","09:00","11:00","14:00","16:00","18:00","21:00","23:00"],
-  nacional: ["02:00","08:00","10:00","12:00","15:00","17:00","20:00","23:00"],
-  federal: ["19:00"]
-};
-
-//////////////////////////////////////////////////
 // 🔁 RETRY
 //////////////////////////////////////////////////
 
@@ -82,7 +71,7 @@ async function tentar(fn, tentativas = 3) {
 }
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER
+// 🔍 SCRAPER INTELIGENTE (CORRIGIDO)
 //////////////////////////////////////////////////
 
 async function scraper(url, banca) {
@@ -97,11 +86,23 @@ async function scraper(url, banca) {
 
     const $ = cheerio.load(data);
     const lista = [];
+    const vistos = new Set();
 
     $("table").each((i, tabela) => {
 
-      let horario = HORARIOS[banca]?.[i] || "00:00";
+      // 🔥 pega texto do bloco inteiro
+      const texto = $(tabela).closest("div").text();
 
+      // 🔥 extrai horário REAL (ex: 02:00, 23:00)
+      let match = texto.match(/(\d{1,2}[:h]\d{2})/);
+      let horario = "00:00";
+
+      if (match) {
+        horario = match[1].replace("h", ":");
+        if (horario.length === 4) horario = "0" + horario;
+      }
+
+      // 🔥 federal só 1 resultado
       if (banca === "federal" && lista.length >= 1) return;
 
       const nums = [];
@@ -112,6 +113,10 @@ async function scraper(url, banca) {
       });
 
       if (nums.length < 5) return;
+
+      const chave = `${banca}-${horario}-${nums.join("-")}`;
+      if (vistos.has(chave)) return;
+      vistos.add(chave);
 
       lista.push({
         data: hojeBR(),
@@ -127,7 +132,7 @@ async function scraper(url, banca) {
 
     return lista;
 
-  } catch {
+  } catch (e) {
     console.log("❌ erro scraper:", banca);
     return [];
   }
@@ -178,7 +183,7 @@ async function atualizar() {
 }
 
 //////////////////////////////////////////////////
-// 📊 ROTA COMPATÍVEL COM SEU APP
+// 📊 ROTA (COMPATÍVEL COM SEU APP)
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req, res) => {
@@ -273,5 +278,5 @@ setInterval(async () => {
 //////////////////////////////////////////////////
 
 app.listen(PORT, () => {
-  console.log("🚀 API rodando");
+  console.log("🚀 API rodando na porta", PORT);
 });
