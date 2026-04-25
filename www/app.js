@@ -608,6 +608,11 @@ window.onload = async ()=>{
       headers:{ Authorization: "Bearer" + token }
     });
 
+    console.log("STATUS:" , res.status);
+
+    const json = await res.json();
+    console.log("RESPOSTA:" , json);
+
     if(res.status === 401){
       throw new Error();
     }
