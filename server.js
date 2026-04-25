@@ -11,7 +11,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 //////////////////////////////////////////////////
-// 🇧🇷 DATA BR
+// 🇧🇷 DATA
 //////////////////////////////////////////////////
 
 function agoraBR() {
@@ -74,8 +74,8 @@ async function tentar(fn, tentativas = 3) {
   for (let i = 0; i < tentativas; i++) {
     try {
       return await fn();
-    } catch (e) {
-      if (i === tentativas - 1) throw e;
+    } catch {
+      if (i === tentativas - 1) throw new Error("Falhou");
       await new Promise(r => setTimeout(r, 1000));
     }
   }
@@ -100,8 +100,7 @@ async function scraper(url, banca) {
 
     $("table").each((i, tabela) => {
 
-      let horario = HORARIOS[banca]?.[i];
-      if (!horario) return;
+      let horario = HORARIOS[banca]?.[i] || "00:00";
 
       if (banca === "federal" && lista.length >= 1) return;
 
@@ -128,7 +127,7 @@ async function scraper(url, banca) {
 
     return lista;
 
-  } catch (e) {
+  } catch {
     console.log("❌ erro scraper:", banca);
     return [];
   }
@@ -149,14 +148,16 @@ async function atualizar() {
     scraper("https://www.resultadofacil.com.br/resultado-banca-federal", "federal")
   ]);
 
+  console.log("📊", {
+    rio: rio.length,
+    look: look.length,
+    nacional: nacional.length,
+    federal: federal.length
+  });
+
   const dados = { rio, look, nacional, federal };
 
   for (const banca in dados) {
-
-    if (!dados[banca] || dados[banca].length === 0) {
-      console.log(`⚠️ ${banca} vazio`);
-      continue;
-    }
 
     for (const item of dados[banca]) {
 
@@ -168,17 +169,16 @@ async function atualizar() {
           { $set: { ...item, banca } },
           { upsert: true }
         );
-
-        console.log(`✅ ${banca} ${item.horario}`);
-      } catch (e) {
+      } catch {
         console.log("❌ erro salvar:", id);
       }
+
     }
   }
 }
 
 //////////////////////////////////////////////////
-// 📊 ROTA (FORMATO DO SEU APP)
+// 📊 ROTA COMPATÍVEL COM SEU APP
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req, res) => {
@@ -211,10 +211,21 @@ app.get("/resultados", async (req, res) => {
 
     });
 
-    // ordenar tudo
-    for (const data in historico) {
-      for (const banca in historico[data]) {
-        historico[data][banca].sort((a, b) =>
+    // 🔥 GARANTE DIA ATUAL
+    const hoje = hojeBR();
+    if (!historico[hoje]) {
+      historico[hoje] = {
+        rio: [],
+        look: [],
+        nacional: [],
+        federal: []
+      };
+    }
+
+    // ordenar
+    for (const d in historico) {
+      for (const b in historico[d]) {
+        historico[d][b].sort((a, b) =>
           a.horario.localeCompare(b.horario)
         );
       }
@@ -225,9 +236,7 @@ app.get("/resultados", async (req, res) => {
       historico
     });
 
-  } catch (e) {
-
-    console.log("❌ erro rota");
+  } catch {
 
     res.json({
       atualizado: agoraBR(),
@@ -239,22 +248,22 @@ app.get("/resultados", async (req, res) => {
 });
 
 //////////////////////////////////////////////////
-// 🔄 LOOP SEGURO
+// 🔄 LOOP
 //////////////////////////////////////////////////
 
 setInterval(async () => {
   try {
     await atualizar();
-  } catch (e) {
+  } catch {
     console.log("🔥 erro loop");
   }
-}, 180000); // 3 min
+}, 180000);
 
 // primeira execução
 (async () => {
   try {
     await atualizar();
-  } catch (e) {
+  } catch {
     console.log("❌ erro inicial");
   }
 })();
@@ -264,5 +273,5 @@ setInterval(async () => {
 //////////////////////////////////////////////////
 
 app.listen(PORT, () => {
-  console.log("🚀 API rodando na porta", PORT);
+  console.log("🚀 API rodando");
 });
