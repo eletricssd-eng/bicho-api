@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 3000;
 // 🔥 MONGO
 const MONGO_URL = process.env.MONGO_URL;
 
-mongoose.connect(MONGO_URL)
+mongoose.connect(mongodb+srv://admin:Eletric2@cluster0.abfiht1.mongodb.net/bicho?retryWrites=true&w=majority)
 .then(()=> console.log("✅ Mongo conectado"))
 .catch(err => console.log("❌ erro mongo:", err));
 
