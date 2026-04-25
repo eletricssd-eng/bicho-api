@@ -6,38 +6,33 @@ import mongoose from "mongoose";
 
 const app = express();
 app.use(cors());
+app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-//////////////////////////////////////////////////
-// 🔌 MONGO
-//////////////////////////////////////////////////
-
+// 🔥 MONGO
 const MONGO_URL = process.env.MONGO_URL;
 
-if (!MONGO_URL) {
+if(!MONGO_URL){
   console.log("❌ MONGO_URL NÃO DEFINIDA");
-} else {
+}else{
   mongoose.connect(MONGO_URL)
-    .then(() => console.log("✅ Mongo conectado"))
+    .then(()=> console.log("✅ Mongo conectado"))
     .catch(err => console.log("❌ erro mongo:", err));
 }
-
+// 📦 MODEL
 const ResultadoSchema = new mongoose.Schema({
   data: String,
-  banca: String,
-  horario: String,
-  p1: String,
-  p2: String,
-  p3: String,
-  p4: String,
-  p5: String
+  rio: Array,
+  look: Array,
+  nacional: Array,
+  federal: Array
 });
 
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER
+// 🔍 SCRAPER (SEM PUPPETEER = NÃO QUEBRA NO RENDER)
 //////////////////////////////////////////////////
 
 async function scraper(url){
@@ -51,33 +46,49 @@ async function scraper(url){
 
     $("table").each((i, tabela)=>{
 
-      let titulo = $(tabela).prevAll("h2,h3,strong").first().text().trim();
-      if(!titulo) titulo = "Horário " + (i+1);
+      let titulo = $(tabela)
+        .prevAll("h2, h3, strong")
+        .first()
+        .text()
+        .trim();
+
+      if(!titulo || titulo.length < 3){
+        titulo = "Horário " + (i+1);
+      }
 
       const nums = [];
 
       $(tabela).find("tr").each((i,tr)=>{
-        const match = $(tr).text().match(/\d{4}/);
+        const texto = $(tr).text();
+        const match = texto.match(/\d{4}/);
         if(match) nums.push(match[0]);
       });
 
       const tituloLower = titulo.toLowerCase();
 
       const isFederal = tituloLower.includes("federal");
-      const is10 = tituloLower.includes("1 ao 10");
+      const is10 = tituloLower.includes("1 ao 10") || tituloLower.includes("10º");
 
       if(isFederal && is10) return;
 
       if(nums.length >= 5){
+
         lista.push({
-          horario: titulo.replace(/1 ao.*?/gi, "").trim(),
+          horario: titulo
+            .replace(/1 ao 10º?/gi,"")
+            .replace(/1 ao 5º?/gi,"")
+            .replace(/resultado do dia/gi,"")
+            .trim(),
+
           p1: nums[0],
           p2: nums[1],
           p3: nums[2],
           p4: nums[3],
           p5: nums[4]
         });
+
       }
+
     });
 
     return lista;
@@ -92,92 +103,103 @@ async function scraper(url){
 // 🏦 BANCAS
 //////////////////////////////////////////////////
 
-async function pegarTudo(){
-
+async function pegarBancas(){
   return {
     rio: await scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
     look: await scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
-    nacional: await scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje"),
-    federal: await scraper("https://www.resultadofacil.com.br/resultado-banca-federal")
+    nacional: await scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje")
   };
-
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR NO MONGO (SEM DUPLICAR)
+// 🇧🇷 FEDERAL
 //////////////////////////////////////////////////
 
-async function salvarMongo(dados){
+async function pegarFederal(){
 
-  const hoje = new Date().toISOString().split("T")[0];
+  let lista = await scraper("https://www.resultadofacil.com.br/resultado-banca-federal");
 
-  for(const banca in dados){
+  return lista.map(item => ({
+    horario: item.horario,
+    p1: item.p1,
+    p2: item.p2,
+    p3: item.p3,
+    p4: item.p4,
+    p5: item.p5
+  }));
+}
 
-    for(const item of dados[banca]){
+//////////////////////////////////////////////////
+// 💾 SALVAR NO MONGO
+//////////////////////////////////////////////////
 
-      const existe = await Resultado.findOne({
-        data: hoje,
-        banca,
-        horario: item.horario
-      });
+async function salvarHistorico(dadosHoje){
 
-      if(!existe){
-        await Resultado.create({
-          data: hoje,
-          banca,
-          ...item
-        });
-      }
+  const dataHoje = new Date().toISOString().split("T")[0];
 
-    }
+  let doc = await Resultado.findOne({ data: dataHoje });
+
+  if(!doc){
+
+    await Resultado.create({
+      data: dataHoje,
+      ...dadosHoje
+    });
+
+  }else{
+
+    const bancas = ["rio","look","nacional","federal"];
+
+    bancas.forEach(banca => {
+
+      const antigos = doc[banca] || [];
+      const novos = dadosHoje[banca] || [];
+
+      const mapa = {};
+
+      antigos.forEach(i => mapa[i.horario] = i);
+      novos.forEach(i => mapa[i.horario] = i);
+
+      doc[banca] = Object.values(mapa);
+
+    });
+
+    await doc.save();
   }
-
 }
 
 //////////////////////////////////////////////////
-// 📊 HISTÓRICO
+// 📊 LER HISTÓRICO
 //////////////////////////////////////////////////
 
-async function pegarHistorico(){
+async function lerHistorico(){
 
-  const registros = await Resultado.find().sort({ data: -1 });
+  const docs = await Resultado.find()
+    .sort({ data: -1 })
+    .limit(7);
 
   const historico = {};
 
-  registros.forEach(r => {
-
-    if(!historico[r.data]){
-      historico[r.data] = {
-        rio: [],
-        look: [],
-        nacional: [],
-        federal: []
-      };
-    }
-
-    historico[r.data][r.banca].push({
-      horario: r.horario,
-      p1: r.p1,
-      p2: r.p2,
-      p3: r.p3,
-      p4: r.p4,
-      p5: r.p5
-    });
-
+  docs.forEach(d=>{
+    historico[d.data] = {
+      rio: d.rio || [],
+      look: d.look || [],
+      nacional: d.nacional || [],
+      federal: d.federal || []
+    };
   });
 
   return historico;
-
 }
 
 //////////////////////////////////////////////////
-// 🚀 CACHE
+// 🚀 CACHE + UPDATE
 //////////////////////////////////////////////////
 
 let cache = null;
 let tempo = 0;
 
-async function carregar(){
+async function carregarTudo(){
 
   const agora = Date.now();
 
@@ -185,13 +207,19 @@ async function carregar(){
     return cache;
   }
 
-  console.log("🔄 Atualizando...");
+  console.log("🔄 Atualizando dados...");
 
-  const dados = await pegarTudo();
+  const bancas = await pegarBancas();
+  const federal = await pegarFederal();
 
-  await salvarMongo(dados);
+  const dadosHoje = {
+    ...bancas,
+    federal
+  };
 
-  const historico = await pegarHistorico();
+  await salvarHistorico(dadosHoje);
+
+  const historico = await lerHistorico();
 
   cache = {
     atualizado: new Date().toLocaleString(),
@@ -201,7 +229,6 @@ async function carregar(){
   tempo = agora;
 
   return cache;
-
 }
 
 //////////////////////////////////////////////////
@@ -209,7 +236,7 @@ async function carregar(){
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req,res)=>{
-  const dados = await carregar();
+  const dados = await carregarTudo();
   res.json(dados);
 });
 
