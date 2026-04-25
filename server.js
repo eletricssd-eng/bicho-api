@@ -1,7 +1,6 @@
 import express from "express";
-import axios from "axios";
+import puppeteer from "puppeteer";
 import cors from "cors";
-import * as cheerio from "cheerio";
 import fs from "fs";
 
 const app = express();
@@ -22,7 +21,7 @@ app.post("/login", (req, res) => {
   res.json({ erro: "Login inválido" });
 });
 
-// ================= BANCO LOCAL =================
+// ================= BANCO =================
 function lerDados() {
   if (!fs.existsSync(FILE)) {
     return { atualizado: "", historico: {} };
@@ -36,72 +35,83 @@ function salvarDados(dados) {
 
 // ================= DATA =================
 function getHoje() {
-  const d = new Date();
-  return d.toISOString().split("T")[0];
+  return new Date().toISOString().split("T")[0];
 }
 
-// ================= SCRAPING FEDERAL =================
-async function pegarFederal() {
-  try {
-    const url = "https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje";
+// ================= SCRAPER =================
+async function scraper() {
 
-    const { data } = await axios.get(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0"
-      }
+  const browser = await puppeteer.launch({
+    headless: "new",
+    args: ["--no-sandbox", "--disable-setuid-sandbox"]
+  });
+
+  const page = await browser.newPage();
+
+  let resultado = {
+    rio: [],
+    look: [],
+    nacional: [],
+    federal: []
+  };
+
+  try {
+
+    // 🔥 SITE BASE (FUNCIONA COM JS)
+    await page.goto("https://www.resultadofacil.com.br/", {
+      waitUntil: "networkidle2",
+      timeout: 0
     });
 
-    const $ = cheerio.load(data);
+    // ================= FEDERAL =================
+    await page.goto("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje");
 
-    let resultados = [];
+    await page.waitForSelector("table");
 
-    // 🔥 seletor atualizado
-    $("table tr").each((i, el) => {
+    const federal = await page.evaluate(() => {
+      let out = [];
 
-      const tds = $(el).find("td");
+      document.querySelectorAll("table tr").forEach(tr => {
 
-      if (tds.length >= 6) {
+        const td = tr.querySelectorAll("td");
 
-        const p1 = $(tds[1]).text().trim();
-        const p2 = $(tds[2]).text().trim();
-        const p3 = $(tds[3]).text().trim();
-        const p4 = $(tds[4]).text().trim();
-        const p5 = $(tds[5]).text().trim();
-
-        // só adiciona se válido
-        if (p1 && p2 && p3) {
-          resultados.push({
+        if (td.length >= 6) {
+          out.push({
             horario: "19:00",
-            p1,
-            p2,
-            p3,
-            p4,
-            p5
+            p1: td[1].innerText.trim(),
+            p2: td[2].innerText.trim(),
+            p3: td[3].innerText.trim(),
+            p4: td[4].innerText.trim(),
+            p5: td[5].innerText.trim()
           });
         }
-      }
+      });
+
+      return out;
     });
 
-    console.log("📡 Federal capturado:", resultados.length);
+    resultado.federal = federal;
 
-    return resultados;
+    // ================= OUTRAS BANCAS =================
+    // 👉 você pode adicionar mais páginas aqui depois
 
   } catch (e) {
-    console.log("❌ erro scraping:", e.message);
-    return [];
+    console.log("Erro scraping:", e.message);
   }
+
+  await browser.close();
+
+  return resultado;
 }
 
 // ================= FALLBACK =================
-function pegarUltimoFederal(dados) {
+function pegarUltimo(dados, banca) {
   const datas = Object.keys(dados.historico)
     .sort((a,b)=> new Date(b) - new Date(a));
 
   for (let d of datas) {
-    const fed = dados.historico[d]?.federal;
-    if (fed && fed.length > 0) {
-      return fed;
-    }
+    const lista = dados.historico[d]?.[banca];
+    if (lista && lista.length > 0) return lista;
   }
 
   return [];
@@ -113,7 +123,6 @@ async function atualizar() {
   const dados = lerDados();
   const hoje = getHoje();
 
-  // 🔥 cria dia só se precisar
   if (!dados.historico[hoje]) {
     dados.historico[hoje] = {
       rio: [],
@@ -123,18 +132,21 @@ async function atualizar() {
     };
   }
 
-  let federal = await pegarFederal();
+  const novos = await scraper();
 
-  // 🔥 se scraping falhar, usa fallback
-  if (federal.length === 0) {
-    console.log("⚠️ usando fallback");
-    federal = pegarUltimoFederal(dados);
-  }
+  ["rio","look","nacional","federal"].forEach(banca => {
 
-  // 🔥 só salva se tiver algo
-  if (federal.length > 0) {
-    dados.historico[hoje].federal = federal;
-  }
+    let lista = novos[banca];
+
+    if (!lista || lista.length === 0) {
+      lista = pegarUltimo(dados, banca);
+    }
+
+    if (lista && lista.length > 0) {
+      dados.historico[hoje][banca] = lista;
+    }
+
+  });
 
   dados.atualizado = new Date().toLocaleString("pt-BR");
 
@@ -143,17 +155,16 @@ async function atualizar() {
   console.log("✅ atualizado:", dados.atualizado);
 }
 
-// ================= AUTO UPDATE =================
-setInterval(atualizar, 60000); // 1 min
+// ================= LOOP =================
+setInterval(atualizar, 120000); // 2 min
 atualizar();
 
 // ================= ROTAS =================
 app.get("/resultados", (req, res) => {
-  const dados = lerDados();
-  res.json(dados);
+  res.json(lerDados());
 });
 
 // ================= START =================
 app.listen(PORT, () => {
-  console.log("🚀 API rodando na porta", PORT);
+  console.log("🚀 API PROFISSIONAL rodando");
 });
