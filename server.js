@@ -33,7 +33,12 @@ function hojeBR() {
 //////////////////////////////////////////////////
 
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ Mongo conectado"))
+  .then(async () => {
+    console.log("✅ Mongo conectado");
+
+    // índice único (evita duplicação)
+    await Resultado.collection.createIndex({ uniqueId: 1 }, { unique: true });
+  })
   .catch(err => console.log("❌ erro mongo:", err));
 
 //////////////////////////////////////////////////
@@ -64,6 +69,21 @@ const HORARIOS = {
 };
 
 //////////////////////////////////////////////////
+// 🔁 RETRY
+//////////////////////////////////////////////////
+
+async function tentar(fn, tentativas = 3) {
+  for (let i = 0; i < tentativas; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (i === tentativas - 1) throw e;
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+}
+
+//////////////////////////////////////////////////
 // 🧠 HELPERS
 //////////////////////////////////////////////////
 
@@ -84,20 +104,22 @@ function detectarFaltantes(dados) {
 }
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER ROBUSTO
+// 🔍 SCRAPER PROFISSIONAL
 //////////////////////////////////////////////////
 
 async function scraper(url, banca) {
 
   try {
 
-    const { data } = await axios.get(url + "?nocache=" + Date.now(), {
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        "Cache-Control": "no-cache"
-      },
-      timeout: 15000
-    });
+    const { data } = await tentar(() =>
+      axios.get(url + "?nocache=" + Date.now(), {
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+          "Cache-Control": "no-cache"
+        },
+        timeout: 10000
+      })
+    );
 
     const $ = cheerio.load(data);
     const lista = [];
@@ -106,17 +128,17 @@ async function scraper(url, banca) {
     $("table").each((i, tabela) => {
 
       let titulo = $(tabela).closest("div").text();
-
       let horario = extrairHorario(titulo);
 
+      // fallback mais seguro
       if (!horario && HORARIOS[banca]) {
-        horario = HORARIOS[banca][lista.length];
+        horario = HORARIOS[banca][i];
       }
 
       if (!horario) return;
 
-      // 🔥 federal só 1 resultado
-      if (banca === "federal" && lista.length > 0) return;
+      // federal só 1
+      if (banca === "federal" && lista.length >= 1) return;
 
       const nums = [];
 
@@ -128,6 +150,7 @@ async function scraper(url, banca) {
       const numeros = nums.slice(0, 5);
 
       if (numeros.length < 5) return;
+      if (numeros.some(n => n === "0000")) return;
 
       const chave = `${banca}-${horario}-${numeros.join("-")}`;
       if (vistos.has(chave)) return;
@@ -148,7 +171,7 @@ async function scraper(url, banca) {
     return lista;
 
   } catch (e) {
-    console.log("❌ erro scraper:", url);
+    console.log("❌ erro scraper:", banca);
     return [];
   }
 }
@@ -172,7 +195,7 @@ async function atualizar() {
   for (const banca in dados) {
     for (const item of dados[banca]) {
 
-      const id = `${banca}-${item.data}-${item.horario}-${item.p1}`;
+      const id = `${banca}-${item.data}-${item.horario}-${item.p1}-${item.p2}-${item.p3}-${item.p4}-${item.p5}`;
 
       await Resultado.updateOne(
         { uniqueId: id },
@@ -180,27 +203,27 @@ async function atualizar() {
         { upsert: true }
       );
 
+      console.log(`✅ ${banca} ${item.horario} salvo`);
     }
   }
 }
 
 //////////////////////////////////////////////////
-// 📊 BUSCAR HOJE (COM FALLBACK)
+// 📊 BUSCAR
 //////////////////////////////////////////////////
 
 async function buscarResultados() {
 
   const hoje = hojeBR();
-
   let dados = await Resultado.find({ data: hoje });
 
   let dataUsada = hoje;
   let origem = "hoje";
 
-  // 🔥 fallback automático
+  // fallback automático
   if (dados.length === 0) {
 
-    console.log("⚠️ Sem dados hoje, buscando anterior...");
+    console.log("⚠️ fallback ativado");
 
     const ultimo = await Resultado.findOne().sort({ data: -1 });
 
@@ -209,7 +232,6 @@ async function buscarResultados() {
       dataUsada = ultimo.data;
       origem = "anterior";
     }
-
   }
 
   const res = { rio: [], look: [], nacional: [], federal: [] };
@@ -225,19 +247,22 @@ async function buscarResultados() {
     });
   });
 
+  // ordena
+  for (const banca in res) {
+    res[banca].sort((a, b) => a.horario.localeCompare(b.horario));
+  }
+
   return { resultados: res, dataUsada, origem };
 }
 
 //////////////////////////////////////////////////
-// 🌐 ROTA PRINCIPAL
+// 🌐 ROTA
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req, res) => {
-
   try {
 
     const { resultados, dataUsada, origem } = await buscarResultados();
-
     const faltando = detectarFaltantes(resultados);
 
     res.json({
@@ -252,16 +277,14 @@ app.get("/resultados", async (req, res) => {
     console.log(e);
     res.status(500).json({ erro: "Erro servidor" });
   }
-
 });
 
 //////////////////////////////////////////////////
 // 🔄 AUTO UPDATE
 //////////////////////////////////////////////////
 
-setInterval(atualizar, 60000);
+setInterval(atualizar, 180000); // 3 minutos
 
-// roda ao iniciar
 atualizar();
 
 //////////////////////////////////////////////////
