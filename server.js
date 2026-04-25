@@ -105,9 +105,14 @@ app.post("/login", async (req,res)=>{
 //////////////////////////////////////////////////
 function auth(req,res,next){
 
-  const token = req.headers.authorization;
+  let token = req.headers.authorization;
 
   if(!token) return res.status(401).json({ erro: "Sem token" });
+
+  // 🔥 REMOVE "Bearer "
+  if(token.startsWith("Bearer ")){
+    token = token.slice(7);
+  }
 
   try{
     jwt.verify(token, SECRET);

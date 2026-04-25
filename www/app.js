@@ -605,7 +605,7 @@ window.onload = async ()=>{
 
   try{
     const res = await fetch(API,{
-      headers:{ Authorization: token }
+      headers:{ Authorization: "Bearer" + token }
     });
 
     if(res.status === 401){
