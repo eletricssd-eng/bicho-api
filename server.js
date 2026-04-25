@@ -11,7 +11,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 //////////////////////////////////////////////////
-// 🇧🇷 DATA
+// 🇧🇷 DATA BR
 //////////////////////////////////////////////////
 
 function agoraBR() {
@@ -71,7 +71,7 @@ async function tentar(fn, tentativas = 3) {
 }
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER INTELIGENTE (CORRIGIDO)
+// 🔍 SCRAPER INTELIGENTE
 //////////////////////////////////////////////////
 
 async function scraper(url, banca) {
@@ -90,10 +90,8 @@ async function scraper(url, banca) {
 
     $("table").each((i, tabela) => {
 
-      // 🔥 pega texto do bloco inteiro
       const texto = $(tabela).closest("div").text();
 
-      // 🔥 extrai horário REAL (ex: 02:00, 23:00)
       let match = texto.match(/(\d{1,2}[:h]\d{2})/);
       let horario = "00:00";
 
@@ -102,7 +100,6 @@ async function scraper(url, banca) {
         if (horario.length === 4) horario = "0" + horario;
       }
 
-      // 🔥 federal só 1 resultado
       if (banca === "federal" && lista.length >= 1) return;
 
       const nums = [];
@@ -132,26 +129,32 @@ async function scraper(url, banca) {
 
     return lista;
 
-  } catch (e) {
+  } catch {
     console.log("❌ erro scraper:", banca);
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🔄 ATUALIZAR
+// 🔄 ATUALIZAR (ANTI-TRAVAMENTO)
 //////////////////////////////////////////////////
 
 async function atualizar() {
 
   console.log("⏳ Atualizando...", agoraBR());
 
-  const [rio, look, nacional, federal] = await Promise.all([
-    scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje", "rio"),
-    scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje", "look"),
-    scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje", "nacional"),
-    scraper("https://www.resultadofacil.com.br/resultado-banca-federal", "federal")
-  ]);
+  let rio = [], look = [], nacional = [], federal = [];
+
+  try {
+    [rio, look, nacional, federal] = await Promise.all([
+      scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje", "rio"),
+      scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje", "look"),
+      scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje", "nacional"),
+      scraper("https://www.resultadofacil.com.br/resultado-banca-federal", "federal")
+    ]);
+  } catch {
+    console.log("❌ erro geral scraper");
+  }
 
   console.log("📊", {
     rio: rio.length,
@@ -160,30 +163,77 @@ async function atualizar() {
     federal: federal.length
   });
 
+  const hoje = hojeBR();
   const dados = { rio, look, nacional, federal };
+
+  let salvou = false;
 
   for (const banca in dados) {
 
+    // 🔥 salva vazio se não tiver resultado
+    if (!dados[banca] || dados[banca].length === 0) {
+
+      const id = `${banca}-${hoje}-vazio`;
+
+      await Resultado.updateOne(
+        { uniqueId: id },
+        {
+          $set: {
+            data: hoje,
+            banca,
+            horario: "00:00",
+            p1: "",
+            p2: "",
+            p3: "",
+            p4: "",
+            p5: ""
+          }
+        },
+        { upsert: true }
+      );
+
+      salvou = true;
+      continue;
+    }
+
+    // 🔥 salva dados reais
     for (const item of dados[banca]) {
 
-      const id = `${banca}-${item.data}-${item.horario}-${item.p1}-${item.p2}-${item.p3}-${item.p4}-${item.p5}`;
+      const id = `${banca}-${item.data}-${item.horario}-${item.p1}`;
 
-      try {
-        await Resultado.updateOne(
-          { uniqueId: id },
-          { $set: { ...item, banca } },
-          { upsert: true }
-        );
-      } catch {
-        console.log("❌ erro salvar:", id);
-      }
+      await Resultado.updateOne(
+        { uniqueId: id },
+        { $set: { ...item, banca } },
+        { upsert: true }
+      );
 
+      salvou = true;
     }
+  }
+
+  // 🔥 fallback final
+  if (!salvou) {
+    await Resultado.updateOne(
+      { uniqueId: `force-${hoje}` },
+      {
+        $set: {
+          data: hoje,
+          banca: "rio",
+          horario: "00:00",
+          p1: "",
+          p2: "",
+          p3: "",
+          p4: "",
+          p5: ""
+        }
+      },
+      { upsert: true }
+    );
   }
 }
 
 //////////////////////////////////////////////////
-// 📊 ROTA (COMPATÍVEL COM SEU APP)
+// 📊 ROTA PRINCIPAL (FORMATO DO SEU APP)
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req, res) => {
@@ -205,6 +255,9 @@ app.get("/resultados", async (req, res) => {
         };
       }
 
+      // 🔥 ignora registros vazios na resposta
+      if (r.p1 === "") return;
+
       historico[r.data][r.banca].push({
         horario: r.horario,
         p1: r.p1,
@@ -216,7 +269,7 @@ app.get("/resultados", async (req, res) => {
 
     });
 
-    // 🔥 GARANTE DIA ATUAL
+    // 🔥 garante dia atual SEMPRE
     const hoje = hojeBR();
     if (!historico[hoje]) {
       historico[hoje] = {
@@ -227,7 +280,7 @@ app.get("/resultados", async (req, res) => {
       };
     }
 
-    // ordenar
+    // ordenar horários
     for (const d in historico) {
       for (const b in historico[d]) {
         historico[d][b].sort((a, b) =>
@@ -242,12 +295,10 @@ app.get("/resultados", async (req, res) => {
     });
 
   } catch {
-
     res.json({
       atualizado: agoraBR(),
       historico: {}
     });
-
   }
 
 });
@@ -256,22 +307,10 @@ app.get("/resultados", async (req, res) => {
 // 🔄 LOOP
 //////////////////////////////////////////////////
 
-setInterval(async () => {
-  try {
-    await atualizar();
-  } catch {
-    console.log("🔥 erro loop");
-  }
-}, 180000);
+setInterval(atualizar, 180000);
 
-// primeira execução
-(async () => {
-  try {
-    await atualizar();
-  } catch {
-    console.log("❌ erro inicial");
-  }
-})();
+// roda ao iniciar
+atualizar();
 
 //////////////////////////////////////////////////
 // 🚀 START
