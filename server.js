@@ -33,8 +33,15 @@ function hojeBR() {
 //////////////////////////////////////////////////
 
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ Mongo conectado"))
+  .then(async () => {
+    console.log("✅ Mongo conectado");
+    await Resultado.collection.createIndex({ uniqueId: 1 }, { unique: true });
+  })
   .catch(err => console.log("❌ erro mongo:", err));
+
+//////////////////////////////////////////////////
+// 📦 MODEL
+//////////////////////////////////////////////////
 
 const Resultado = mongoose.model("Resultado", {
   uniqueId: String,
@@ -60,20 +67,43 @@ const HORARIOS = {
 };
 
 //////////////////////////////////////////////////
+// 🔁 RETRY
+//////////////////////////////////////////////////
+
+async function tentar(fn, tentativas = 3) {
+  for (let i = 0; i < tentativas; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (i === tentativas - 1) throw e;
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+}
+
+//////////////////////////////////////////////////
 // 🔍 SCRAPER
 //////////////////////////////////////////////////
 
 async function scraper(url, banca) {
   try {
-    const { data } = await axios.get(url);
-    const $ = cheerio.load(data);
 
+    const { data } = await tentar(() =>
+      axios.get(url + "?nocache=" + Date.now(), {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        timeout: 10000
+      })
+    );
+
+    const $ = cheerio.load(data);
     const lista = [];
 
     $("table").each((i, tabela) => {
 
       let horario = HORARIOS[banca]?.[i];
       if (!horario) return;
+
+      if (banca === "federal" && lista.length >= 1) return;
 
       const nums = [];
 
@@ -123,56 +153,54 @@ async function atualizar() {
 
   for (const banca in dados) {
 
+    if (!dados[banca] || dados[banca].length === 0) {
+      console.log(`⚠️ ${banca} vazio`);
+      continue;
+    }
+
     for (const item of dados[banca]) {
 
       const id = `${banca}-${item.data}-${item.horario}-${item.p1}-${item.p2}-${item.p3}-${item.p4}-${item.p5}`;
 
-      await Resultado.updateOne(
-        { uniqueId: id },
-        { $set: { ...item, banca } },
-        { upsert: true }
-      );
+      try {
+        await Resultado.updateOne(
+          { uniqueId: id },
+          { $set: { ...item, banca } },
+          { upsert: true }
+        );
 
+        console.log(`✅ ${banca} ${item.horario}`);
+      } catch (e) {
+        console.log("❌ erro salvar:", id);
+      }
     }
   }
 }
 
 //////////////////////////////////////////////////
-// 📊 FORMATAR PRO APP
-//////////////////////////////////////////////////
-
-function estruturaVazia() {
-  return {
-    rio: [],
-    look: [],
-    nacional: [],
-    federal: []
-  };
-}
-
-//////////////////////////////////////////////////
-// 📊 ROTA PRINCIPAL
+// 📊 ROTA (FORMATO DO SEU APP)
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req, res) => {
 
   try {
 
-    const hoje = hojeBR();
+    const dados = await Resultado.find().sort({ data: -1 });
 
-    let dados = await Resultado.find({ data: hoje });
-
-    if (!dados.length) {
-      const ultimo = await Resultado.findOne().sort({ data: -1 });
-      if (ultimo) {
-        dados = await Resultado.find({ data: ultimo.data });
-      }
-    }
-
-    const resultados = estruturaVazia();
+    const historico = {};
 
     dados.forEach(r => {
-      resultados[r.banca].push({
+
+      if (!historico[r.data]) {
+        historico[r.data] = {
+          rio: [],
+          look: [],
+          nacional: [],
+          federal: []
+        };
+      }
+
+      historico[r.data][r.banca].push({
         horario: r.horario,
         p1: r.p1,
         p2: r.p2,
@@ -180,47 +208,61 @@ app.get("/resultados", async (req, res) => {
         p4: r.p4,
         p5: r.p5
       });
+
     });
 
-    // ordenar
-    for (const banca in resultados) {
-      resultados[banca].sort((a, b) =>
-        a.horario.localeCompare(b.horario)
-      );
+    // ordenar tudo
+    for (const data in historico) {
+      for (const banca in historico[data]) {
+        historico[data][banca].sort((a, b) =>
+          a.horario.localeCompare(b.horario)
+        );
+      }
     }
 
     res.json({
       atualizado: agoraBR(),
-      resultados
+      historico
     });
 
   } catch (e) {
+
+    console.log("❌ erro rota");
+
     res.json({
       atualizado: agoraBR(),
-      resultados: estruturaVazia()
+      historico: {}
     });
+
   }
 
 });
 
 //////////////////////////////////////////////////
-// 🔄 LOOP
+// 🔄 LOOP SEGURO
 //////////////////////////////////////////////////
 
 setInterval(async () => {
   try {
     await atualizar();
   } catch (e) {
-    console.log("❌ erro loop");
+    console.log("🔥 erro loop");
   }
-}, 180000);
+}, 180000); // 3 min
 
-atualizar();
+// primeira execução
+(async () => {
+  try {
+    await atualizar();
+  } catch (e) {
+    console.log("❌ erro inicial");
+  }
+})();
 
 //////////////////////////////////////////////////
 // 🚀 START
 //////////////////////////////////////////////////
 
 app.listen(PORT, () => {
-  console.log("🚀 API rodando");
+  console.log("🚀 API rodando na porta", PORT);
 });
