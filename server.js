@@ -107,9 +107,11 @@ function auth(req,res,next){
 
   let token = req.headers.authorization;
 
-  if(!token) return res.status(401).json({ erro: "Sem token" });
+  if(!token){
+    return res.status(401).json({ erro: "Sem token" });
+  }
 
-  // 🔥 REMOVE "Bearer "
+  // 🔥 remove "Bearer "
   if(token.startsWith("Bearer ")){
     token = token.slice(7);
   }
@@ -118,7 +120,7 @@ function auth(req,res,next){
     jwt.verify(token, SECRET);
     next();
   }catch{
-    res.status(401).json({ erro: "Token inválido" });
+    return res.status(401).json({ erro: "Token inválido" });
   }
 }
 

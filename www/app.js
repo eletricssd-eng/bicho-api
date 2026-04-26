@@ -38,6 +38,7 @@ async function fazerLogin(){
     if(json.token){
 
       localStorage.setItem("token", json.token);
+      console.log("TOKEN RECEBIDO", json.token);
 
       // 🔥 LEMBRAR USUÁRIO
       if(lembrar){
@@ -602,6 +603,7 @@ window.onload = async ()=>{
     mostrarLogin();
     return;
   }
+  console.log("TOKEM SALVO:", localStorage.getItem("token")):
 
   try{
     const res = await fetch(API,{
