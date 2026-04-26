@@ -2,193 +2,20 @@ import express from "express";
 import axios from "axios";
 import cors from "cors";
 import * as cheerio from "cheerio";
-import mongoose from "mongoose";
-import jwt from "jsonwebtoken";
-import bcrypt from "bcryptjs";
+import fs from "fs";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const PORT = process.env.PORT || 3000;
-const SECRET = process.env.JWT_SECRET || "segredo123";
-const MONGO_URL = process.env.MONGO_URL;
-
-//////////////////////////////////////////////////
-// 🟢 MONGODB
-//////////////////////////////////////////////////
-if(!MONGO_URL){
-  console.log("❌ MONGO_URL NÃO DEFINIDA");
-}else{
-  mongoose.connect(MONGO_URL)
-    .then(()=> {
-      console.log("✅ Mongo conectado");
-      criarAdminPadrao();
-    })
-    .catch(err=> console.log("❌ erro mongo:", err));
-}
-
-//////////////////////////////////////////////////
-// 📦 MODELS
-//////////////////////////////////////////////////
-const ResultadoSchema = new mongoose.Schema({
-  data: String,
-  banca: String,
-  horario: String,
-  p1: String,
-  p2: String,
-  p3: String,
-  p4: String,
-  p5: String
-});
-
-const Resultado = mongoose.model("Resultado", ResultadoSchema);
-
-const UserSchema = new mongoose.Schema({
-  username: String,
-  password: String,
-  role: { type: String, default: "user" }
-});
-
-const User = mongoose.model("User", UserSchema);
-
-//////////////////////////////////////////////////
-// 👤 CRIAR ADMIN PADRÃO
-//////////////////////////////////////////////////
-async function criarAdminPadrao(){
-
-  const existe = await User.findOne({ username: "admin" });
-
-  if(!existe){
-
-    const hash = await bcrypt.hash("1234", 10);
-
-    await User.create({
-      username: "admin",
-      password: hash,
-      role: "admin"
-    });
-
-    console.log("✅ Admin criado: admin / 1234");
-  }
-}
-
-//////////////////////////////////////////////////
-// 🔐 LOGIN
-//////////////////////////////////////////////////
-app.post("/login", async (req,res)=>{
-
-  const { username, password } = req.body;
-
-  const user = await User.findOne({ username });
-
-  if(!user){
-    return res.status(401).json({ erro: "Usuário não encontrado" });
-  }
-
-  const ok = await bcrypt.compare(password, user.password);
-
-  if(!ok){
-    return res.status(401).json({ erro: "Senha inválida" });
-  }
-
-  const token = jwt.sign({
-    id: user._id,
-    role: user.role
-  }, SECRET, { expiresIn: "7d" });
-
-  res.json({ token });
-});
-
-//////////////////////////////////////////////////
-// 🔐 MIDDLEWARE
-//////////////////////////////////////////////////
-function auth(req,res,next){
-
-  let token = req.headers.authorization;
-
-  if(!token){
-    return res.status(401).json({ erro: "Sem token" });
-  }
-
-  // 🔥 remove "Bearer "
-  if(token.startsWith("Bearer ")){
-    token = token.slice(7);
-  }
-
-  try{
-    jwt.verify(token, SECRET);
-    next();
-  }catch{
-    return res.status(401).json({ erro: "Token inválido" });
-  }
-}
-
-function adminOnly(req,res,next){
-
-  const token = req.headers.authorization;
-
-  try{
-    const decoded = jwt.verify(token, SECRET);
-
-    if(decoded.role !== "admin"){
-      return res.status(403).json({ erro: "Apenas admin" });
-    }
-
-    next();
-
-  }catch{
-    res.status(401).json({ erro: "Token inválido" });
-  }
-}
-
-//////////////////////////////////////////////////
-// 👤 ADMIN ROTAS
-//////////////////////////////////////////////////
-app.post("/admin/criar-usuario", auth, adminOnly, async (req,res)=>{
-
-  const { username, password, role } = req.body;
-
-  if(!username || !password){
-    return res.status(400).json({ erro: "Dados obrigatórios" });
-  }
-
-  const existe = await User.findOne({ username });
-
-  if(existe){
-    return res.status(400).json({ erro: "Usuário já existe" });
-  }
-
-  const hash = await bcrypt.hash(password, 10);
-
-  await User.create({
-    username,
-    password: hash,
-    role: role || "user"
-  });
-
-  res.json({ ok: true });
-});
-
-app.get("/admin/usuarios", auth, adminOnly, async (req,res)=>{
-
-  const users = await User.find().select("-password");
-
-  res.json(users);
-});
-
-app.delete("/admin/usuario/:id", auth, adminOnly, async (req,res)=>{
-
-  await User.findByIdAndDelete(req.params.id);
-
-  res.json({ ok: true });
-});
+const PORT = process.env.PORT || 10000;
+const HISTORICO_FILE = "./historico.json";
 
 //////////////////////////////////////////////////
 // 🔍 SCRAPER
 //////////////////////////////////////////////////
-async function scraper(url){
 
+async function scraper(url){
   try{
     const { data } = await axios.get(url, {
       headers: { "User-Agent": "Mozilla/5.0" }
@@ -199,38 +26,54 @@ async function scraper(url){
 
     $("table").each((i, tabela)=>{
 
-      let titulo = $(tabela).prevAll("h2, h3, strong").first().text().trim();
-      if(!titulo) titulo = "Horário " + (i+1);
+      let titulo = "";
+      const prev = $(tabela).prevAll("h2, h3, strong").first();
+
+      if(prev.length){
+        titulo = prev.text().trim();
+      }
+
+      if(!titulo || titulo.length < 3){
+        titulo = "Horário " + (i+1);
+      }
 
       const nums = [];
 
       $(tabela).find("tr").each((i,tr)=>{
-        const match = $(tr).text().match(/\d{4}/);
+        const texto = $(tr).text();
+        const match = texto.match(/\d{4}/);
         if(match) nums.push(match[0]);
       });
 
-      const t = titulo.toLowerCase();
+      const tituloLower = titulo.toLowerCase();
 
-      if(t.includes("federal") && t.includes("10")) return;
+      const isFederal = tituloLower.includes("federal");
+      const is10 = tituloLower.includes("1 ao 10") || tituloLower.includes("10º");
+
+      // ❌ ignora federal errado
+      if(isFederal && is10) return;
 
       if(nums.length >= 5){
-
         lista.push({
-          horario: titulo.replace(/1 ao 10|1 ao 5|resultado do dia/gi,"").trim(),
+          horario: titulo
+            .replace(/1 ao 10º?/gi, "")
+            .replace(/1 ao 5º?/gi, "")
+            .trim(),
+
           p1: nums[0],
           p2: nums[1],
           p3: nums[2],
           p4: nums[3],
           p5: nums[4]
         });
-
       }
 
     });
 
     return lista;
 
-  }catch{
+  }catch(e){
+    console.log("❌ erro scraper:", url);
     return [];
   }
 }
@@ -238,93 +81,111 @@ async function scraper(url){
 //////////////////////////////////////////////////
 // 🏦 BANCAS
 //////////////////////////////////////////////////
-async function pegarTudo(){
 
-  const rio = await scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje");
-  const look = await scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje");
-  const nacional = await scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje");
-  const federal = await scraper("https://www.resultadofacil.com.br/resultado-banca-federal");
-
-  return { rio, look, nacional, federal };
+async function pegarBancas(){
+  return {
+    rio: await scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
+    look: await scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
+    nacional: await scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje")
+  };
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR MONGO
+// 🇧🇷 FEDERAL
 //////////////////////////////////////////////////
-async function salvarMongo(dados){
 
-  const hoje = new Date().toISOString().split("T")[0];
+async function pegarFederal(){
+  let lista = await scraper("https://www.resultadofacil.com.br/resultado-banca-federal");
 
-  for(const banca in dados){
+  return lista.map(item => ({
+    horario: item.horario
+      .replace(/1 ao 10º?/gi, "")
+      .replace(/1 ao 5º?/gi, "")
+      .replace(/resultado do dia/gi, "")
+      .trim(),
 
-    for(const item of dados[banca]){
+    p1: item.p1,
+    p2: item.p2,
+    p3: item.p3,
+    p4: item.p4,
+    p5: item.p5
+  }));
+}
 
-      await Resultado.updateOne(
-        { data: hoje, banca, horario: item.horario },
-        { ...item, data: hoje, banca },
-        { upsert: true }
-      );
+//////////////////////////////////////////////////
+// 💾 HISTÓRICO
+//////////////////////////////////////////////////
 
-    }
-
+function lerHistorico(){
+  try{
+    if(!fs.existsSync(HISTORICO_FILE)) return {};
+    return JSON.parse(fs.readFileSync(HISTORICO_FILE));
+  }catch{
+    return {};
   }
 }
 
-//////////////////////////////////////////////////
-// 📦 CARREGAR MONGO
-//////////////////////////////////////////////////
-async function carregarMongo(){
+function salvarHistorico(dadosHoje){
 
-  const registros = await Resultado.find().lean();
+  let historico = lerHistorico();
+  const hoje = new Date().toISOString().split("T")[0];
 
-  const historico = {};
+  if(!historico[hoje]){
+    historico[hoje] = {
+      rio: [],
+      look: [],
+      nacional: [],
+      federal: []
+    };
+  }
 
-  registros.forEach(r=>{
+  const bancas = ["rio","look","nacional","federal"];
 
-    if(!historico[r.data]){
-      historico[r.data] = {
-        rio: [],
-        look: [],
-        nacional: [],
-        federal: []
-      };
-    }
+  bancas.forEach(banca => {
 
-    historico[r.data][r.banca].push({
-      horario: r.horario,
-      p1: r.p1,
-      p2: r.p2,
-      p3: r.p3,
-      p4: r.p4,
-      p5: r.p5
-    });
+    const novos = dadosHoje[banca] || [];
+    const antigos = historico[hoje][banca] || [];
+
+    const mapa = {};
+
+    antigos.forEach(i => mapa[i.horario] = i);
+    novos.forEach(i => mapa[i.horario] = i);
+
+    historico[hoje][banca] = Object.values(mapa);
 
   });
 
-  return historico;
+  fs.writeFileSync(HISTORICO_FILE, JSON.stringify(historico, null, 2));
 }
 
 //////////////////////////////////////////////////
 // 🚀 CACHE
 //////////////////////////////////////////////////
+
 let cache = null;
 let tempo = 0;
 
-async function atualizar(){
+async function carregarTudo(){
 
   const agora = Date.now();
 
-  if(cache && agora - tempo < 60000){
+  if(cache && (agora - tempo < 60000)){
     return cache;
   }
 
   console.log("🔄 Atualizando...");
 
-  const dados = await pegarTudo();
+  const bancas = await pegarBancas();
+  const federal = await pegarFederal();
 
-  await salvarMongo(dados);
+  const dadosHoje = {
+    ...bancas,
+    federal
+  };
 
-  const historico = await carregarMongo();
+  salvarHistorico(dadosHoje);
+
+  const historico = lerHistorico();
 
   cache = {
     atualizado: new Date().toLocaleString(),
@@ -337,16 +198,22 @@ async function atualizar(){
 }
 
 //////////////////////////////////////////////////
-// 🌐 ROTA PRINCIPAL
+// 🌐 ROTAS
 //////////////////////////////////////////////////
-app.get("/resultados", auth, async (req,res)=>{
-  const dados = await atualizar();
+
+app.get("/", (req,res)=>{
+  res.send("✅ API DO BICHO ONLINE");
+});
+
+app.get("/resultados", async (req,res)=>{
+  const dados = await carregarTudo();
   res.json(dados);
 });
 
 //////////////////////////////////////////////////
 // 🚀 START
 //////////////////////////////////////////////////
+
 app.listen(PORT, ()=>{
-  console.log("🚀 API rodando na porta", PORT);
+  console.log("🚀 Rodando na porta", PORT);
 });
