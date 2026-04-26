@@ -40,10 +40,12 @@ async function conectarMongo(){
 conectarMongo();
 
 //////////////////////////////////////////////////
-// 📦 MODEL
+// 📦 MODEL (COM UNIQUEID)
 //////////////////////////////////////////////////
 
 const ResultadoSchema = new mongoose.Schema({
+  uniqueId: { type: String, unique: true },
+
   data: String,
   banca: String,
   horario: String,
@@ -57,7 +59,7 @@ const ResultadoSchema = new mongoose.Schema({
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER
+// 🔍 SCRAPER MELHORADO
 //////////////////////////////////////////////////
 
 async function scraper(url){
@@ -71,7 +73,6 @@ async function scraper(url){
     const $ = cheerio.load(data);
     const lista = [];
 
-    // 🔥 tenta tabela normal
     $("table").each((i, tabela)=>{
 
       let titulo = $(tabela).prevAll("h2,h3,strong").first().text().trim();
@@ -99,11 +100,10 @@ async function scraper(url){
 
     });
 
-    // 🔥 fallback (caso não tenha tabela)
+    // 🔥 fallback
     if(lista.length === 0){
 
       const texto = $("body").text();
-
       const numeros = texto.match(/\d{4}/g);
 
       if(numeros && numeros.length >= 5){
@@ -128,12 +128,14 @@ async function scraper(url){
 }
 
 //////////////////////////////////////////////////
-// 🇧🇷 FEDERAL (ÚLTIMO SORTEIO)
+// 🇧🇷 FEDERAL (ÚLTIMO)
 //////////////////////////////////////////////////
 
 async function pegarFederal(){
 
-  const lista = await scraper("https://www.resultadofacil.com.br/resultado-banca-federal");
+  const lista = await scraper(
+    "https://www.resultadofacil.com.br/resultado-banca-federal"
+  );
 
   return lista.length ? [lista[0]] : [];
 }
@@ -155,7 +157,7 @@ async function pegarTudo(){
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR MONGO
+// 💾 SALVAR (SEM DUPLICAR)
 //////////////////////////////////////////////////
 
 async function salvarMongo(dados){
@@ -172,11 +174,15 @@ async function salvarMongo(dados){
     for(const item of dados[banca]){
 
       try{
+
+        const uniqueId = `${hoje}-${banca}-${item.horario}`;
+
         await Resultado.findOneAndUpdate(
-          { data: hoje, banca, horario: item.horario },
-          { ...item, data: hoje, banca },
+          { uniqueId },
+          { ...item, data: hoje, banca, uniqueId },
           { upsert: true }
         );
+
       }catch(e){
         console.log("❌ erro salvar:", e.message);
       }
@@ -194,7 +200,7 @@ async function salvarMongo(dados){
 async function pegarHistorico(){
 
   if(mongoose.connection.readyState !== 1){
-    console.log("⚠️ Mongo offline - retornando vazio");
+    console.log("⚠️ Mongo offline");
     return {};
   }
 
