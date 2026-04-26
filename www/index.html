@@ -11,37 +11,20 @@
 
 <h1> Jogo do Bicho</h1>
 
-<!-- 🔐 LOGIN -->
-<div id="login" class="tela">
-
-  <h2>Login</h2>
-
-  <input id="usuario" placeholder="Usuário">
-  <input id="senha" type="password" placeholder="Senha">
-
-  <label>
-    <input type="checkbox" id="lembrar"> Lembrar usuário
-  </label>
-
-  <button id="btnLogin" onclick="fazerLogin()">Entrar</button>
-
-  <div id="msgLogin"></div>
-
-</div>
-
-<!-- 🔥 APP -->
-<div id="app" style="display:none;">
+<!-- 🔥 APP DIRETO (SEM LOGIN) -->
+<div id="app">
 
   <!-- MENU -->
   <div class="menu">
     <button class="menu-btn" onclick="trocarTela('home', this)">🏠 Tabela</button>
-<button class="menu-btn" onclick="trocarTela('resultados', this)">Resultados</button>
-<button class="menu-btn" onclick="trocarTela('analise', this)">Análise</button>
-<button class="menu-btn" onclick="trocarTela('palpite', this)">Palpite</button>
-<button class="menu-btn" onclick="trocarTela('mapa', this)">Mapa</button>
-    <button onclick="sair()">Sair</button>
+    <button class="menu-btn" onclick="trocarTela('resultados', this)">Resultados</button>
+    <button class="menu-btn" onclick="trocarTela('analise', this)">Análise</button>
+    <button class="menu-btn" onclick="trocarTela('palpite', this)">Palpite</button>
+    <button class="menu-btn" onclick="trocarTela('mapa', this)">Mapa</button>
   </div>
-<div id="bancasBox"></div>
+
+  <div id="bancasBox"></div>
+
   <!-- TELAS -->
   <div id="home" class="tela"><div id="tabela"></div></div>
   <div id="resultados" class="tela"><div id="resultadosBox"></div></div>
@@ -52,10 +35,10 @@
     <div id="palpiteBox"></div>
   </div>
 
- <div id="mapa" class="tela">
-  <div id="mapaBotoes"></div>
-  <div id="mapaGrid"></div>
-</div>
+  <div id="mapa" class="tela">
+    <div id="mapaBotoes"></div>
+    <div id="mapaGrid"></div>
+  </div>
 
 </div>
 
