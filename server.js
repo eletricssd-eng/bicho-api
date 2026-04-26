@@ -11,7 +11,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 //////////////////////////////////////////////////
-// 🔥 MONGO
+// 🔥 MONGO (AUTO RECONNECT)
 //////////////////////////////////////////////////
 
 const MONGO_URL = process.env.MONGO_URL;
@@ -57,7 +57,7 @@ const ResultadoSchema = new mongoose.Schema({
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER PADRÃO
+// 🔍 SCRAPER
 //////////////////////////////////////////////////
 
 async function scraper(url){
@@ -105,7 +105,7 @@ async function scraper(url){
 }
 
 //////////////////////////////////////////////////
-// 🇧🇷 FEDERAL (PEGA SÓ O ÚLTIMO)
+// 🇧🇷 FEDERAL (ÚLTIMO SORTEIO)
 //////////////////////////////////////////////////
 
 async function pegarFederal(){
@@ -113,7 +113,7 @@ async function pegarFederal(){
   try{
     const { data } = await axios.get(
       "https://www.resultadofacil.com.br/resultado-banca-federal",
-      { headers:{ "User-Agent":"Mozilla/5.0" } }
+      { headers:{ "User-Agent":"Mozilla/5.0" }, timeout:10000 }
     );
 
     const $ = cheerio.load(data);
@@ -144,13 +144,14 @@ async function pegarFederal(){
 
     return ultimo ? [ultimo] : [];
 
-  }catch{
+  }catch(e){
+    console.log("❌ erro federal");
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🏦 TODAS BANCAS (COM PROMISE.ALL)
+// 🏦 TODAS BANCAS
 //////////////////////////////////////////////////
 
 async function pegarTudo(){
@@ -166,13 +167,13 @@ async function pegarTudo(){
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR
+// 💾 SALVAR MONGO
 //////////////////////////////////////////////////
 
 async function salvarMongo(dados){
 
   if(mongoose.connection.readyState !== 1){
-    console.log("⚠️ Mongo offline");
+    console.log("⚠️ Mongo offline - não salvou");
     return;
   }
 
@@ -182,11 +183,15 @@ async function salvarMongo(dados){
 
     for(const item of dados[banca]){
 
-      await Resultado.findOneAndUpdate(
-        { data: hoje, banca, horario: item.horario },
-        { ...item, data: hoje, banca },
-        { upsert: true }
-      );
+      try{
+        await Resultado.findOneAndUpdate(
+          { data: hoje, banca, horario: item.horario },
+          { ...item, data: hoje, banca },
+          { upsert: true }
+        );
+      }catch(e){
+        console.log("❌ erro salvar:", e.message);
+      }
 
     }
 
@@ -201,6 +206,7 @@ async function salvarMongo(dados){
 async function pegarHistorico(){
 
   if(mongoose.connection.readyState !== 1){
+    console.log("⚠️ Mongo offline - retornando vazio");
     return {};
   }
 
@@ -260,7 +266,7 @@ async function carregarTudo(){
 }
 
 //////////////////////////////////////////////////
-// 🌐 ROTAS
+// 🌐 ROTAS (ANTI-CRASH)
 //////////////////////////////////////////////////
 
 app.get("/", (req,res)=>{
@@ -268,8 +274,16 @@ app.get("/", (req,res)=>{
 });
 
 app.get("/resultados", async (req,res)=>{
-  const dados = await carregarTudo();
-  res.json(dados);
+  try{
+    const dados = await carregarTudo();
+    res.json(dados);
+  }catch(e){
+    console.log("❌ ERRO GERAL:", e.message);
+    res.status(500).json({
+      erro: "Erro interno",
+      detalhe: e.message
+    });
+  }
 });
 
 //////////////////////////////////////////////////
