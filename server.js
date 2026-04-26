@@ -129,7 +129,7 @@ async function pegarTudo(){
 async function pegarFederalUltimo(){
 
   const { data } = await axios.get(
-    "https://www.resultadofacil.com.br/resultado-banca-federal",
+    "https://www.resultadofacil.com.br/ultimos-resultados-federal",
     { headers: { "User-Agent": "Mozilla/5.0" } }
   );
 
