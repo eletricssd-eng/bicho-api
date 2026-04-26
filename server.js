@@ -65,12 +65,13 @@ async function scraper(url){
 
     const { data } = await axios.get(url, {
       headers:{ "User-Agent":"Mozilla/5.0" },
-      timeout: 10000
+      timeout: 15000
     });
 
     const $ = cheerio.load(data);
     const lista = [];
 
+    // 🔥 tenta tabela normal
     $("table").each((i, tabela)=>{
 
       let titulo = $(tabela).prevAll("h2,h3,strong").first().text().trim();
@@ -79,8 +80,10 @@ async function scraper(url){
       const nums = [];
 
       $(tabela).find("tr").each((i,tr)=>{
-        const m = $(tr).text().match(/\d{4}/);
-        if(m) nums.push(m[0]);
+        const match = $(tr).text().match(/\d{4}/g);
+        if(match){
+          match.forEach(n => nums.push(n));
+        }
       });
 
       if(nums.length >= 5){
@@ -96,6 +99,26 @@ async function scraper(url){
 
     });
 
+    // 🔥 fallback (caso não tenha tabela)
+    if(lista.length === 0){
+
+      const texto = $("body").text();
+
+      const numeros = texto.match(/\d{4}/g);
+
+      if(numeros && numeros.length >= 5){
+        lista.push({
+          horario: "Extração",
+          p1: numeros[0],
+          p2: numeros[1],
+          p3: numeros[2],
+          p4: numeros[3],
+          p5: numeros[4]
+        });
+      }
+
+    }
+
     return lista;
 
   }catch(e){
@@ -110,44 +133,9 @@ async function scraper(url){
 
 async function pegarFederal(){
 
-  try{
-    const { data } = await axios.get(
-      "https://www.resultadofacil.com.br/resultado-banca-federal",
-      { headers:{ "User-Agent":"Mozilla/5.0" }, timeout:10000 }
-    );
+  const lista = await scraper("https://www.resultadofacil.com.br/resultado-banca-federal");
 
-    const $ = cheerio.load(data);
-
-    let ultimo = null;
-
-    $("table").each((i, tabela)=>{
-
-      const nums = [];
-
-      $(tabela).find("tr").each((i,tr)=>{
-        const m = $(tr).text().match(/\d{4}/);
-        if(m) nums.push(m[0]);
-      });
-
-      if(nums.length >= 5){
-        ultimo = {
-          horario: "Último sorteio",
-          p1: nums[0],
-          p2: nums[1],
-          p3: nums[2],
-          p4: nums[3],
-          p5: nums[4]
-        };
-      }
-
-    });
-
-    return ultimo ? [ultimo] : [];
-
-  }catch(e){
-    console.log("❌ erro federal");
-    return [];
-  }
+  return lista.length ? [lista[0]] : [];
 }
 
 //////////////////////////////////////////////////
