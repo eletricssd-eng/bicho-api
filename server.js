@@ -2,13 +2,44 @@ import express from "express";
 import axios from "axios";
 import cors from "cors";
 import * as cheerio from "cheerio";
-import fs from "fs";
+import mongoose from "mongoose";
 
 const app = express();
 app.use(cors());
+app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const HISTORICO_FILE = "./historico.json";
+
+//////////////////////////////////////////////////
+// 🔥 MONGO
+//////////////////////////////////////////////////
+
+const MONGO_URL = process.env.MONGO_URL;
+
+if(!MONGO_URL){
+  console.log("❌ MONGO_URL NÃO DEFINIDA");
+}else{
+  mongoose.connect(MONGO_URL)
+    .then(()=> console.log("✅ Mongo conectado"))
+    .catch(e=> console.log("❌ erro mongo:", e));
+}
+
+//////////////////////////////////////////////////
+// 📦 MODEL
+//////////////////////////////////////////////////
+
+const ResultadoSchema = new mongoose.Schema({
+  data: String,
+  banca: String,
+  horario: String,
+  p1: String,
+  p2: String,
+  p3: String,
+  p4: String,
+  p5: String
+});
+
+const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
 // 🔍 SCRAPER
@@ -17,72 +48,40 @@ const HISTORICO_FILE = "./historico.json";
 async function scraper(url){
   try{
     const { data } = await axios.get(url, {
-      headers: { "User-Agent": "Mozilla/5.0" }
+      headers:{ "User-Agent":"Mozilla/5.0" }
     });
 
     const $ = cheerio.load(data);
     const lista = [];
 
-    const tabelas = $("table");
+    $("table").each((i, tabela)=>{
 
-    tabelas.each((i, tabela)=>{
-
-      let titulo = "";
-
-      const prev = $(tabela).prevAll("h2, h3, strong").first();
-
-      if(prev.length){
-        titulo = prev.text().trim();
-      }
-
-      if(!titulo || titulo.length < 5){
-        titulo = "Horário " + (i+1);
-      }
+      let titulo = $(tabela).prevAll("h2,h3,strong").first().text().trim();
+      if(!titulo) titulo = "Horário " + (i+1);
 
       const nums = [];
 
       $(tabela).find("tr").each((i,tr)=>{
-        const texto = $(tr).text();
-
-        const match = texto.match(/\d{4}/);
-        if(match) nums.push(match[0]);
+        const m = $(tr).text().match(/\d{4}/);
+        if(m) nums.push(m[0]);
       });
 
-      // 🔥 FILTRO PRINCIPAL (AQUI ESTÁ A CORREÇÃO)
-      const tituloLower = titulo.toLowerCase();
-
-      const isFederal = tituloLower.includes("federal");
-
-      const is10 = tituloLower.includes("1 ao 10") || tituloLower.includes("10º");
-      const is5  = tituloLower.includes("1 ao 5") || tituloLower.includes("5º");
-
-      // ❌ remove versão errada da federal
-      if(isFederal && is10) return;
-
-      // ✅ garante só 1 ao 5
       if(nums.length >= 5){
-
         lista.push({
-          horario: titulo
-            .replace(/1 ao 10º?/gi, "")
-            .replace(/1 ao 5º?/gi, "")
-            .trim(),
-
+          horario: titulo,
           p1: nums[0],
           p2: nums[1],
           p3: nums[2],
           p4: nums[3],
           p5: nums[4]
         });
-
       }
 
     });
 
     return lista;
 
-  }catch(e){
-    console.log("❌ erro scraper:", url);
+  }catch{
     return [];
   }
 }
@@ -91,112 +90,66 @@ async function scraper(url){
 // 🏦 BANCAS
 //////////////////////////////////////////////////
 
-async function pegarBancas(){
+async function pegarTudo(){
+
   return {
     rio: await scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
     look: await scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
-    nacional: await scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje")
+    nacional: await scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje"),
+    federal: await scraper("https://www.resultadofacil.com.br/resultado-banca-federal")
   };
 }
 
 //////////////////////////////////////////////////
-// 🇧🇷 FEDERAL (CORRIGIDA)
+// 💾 SALVAR NO MONGO
 //////////////////////////////////////////////////
 
-async function pegarFederal(){
-  let lista = await scraper("https://www.resultadofacil.com.br/resultado-banca-federal");
+async function salvarMongo(dados){
 
-  // 🔥 FORÇA PADRÃO 1 AO 5 + LIMPA TEXTO
-  lista = lista.map(item => ({
-    horario: item.horario
-      .replace(/1 ao 10º?/gi, "")
-      .replace(/1 ao 5º?/gi, "")
-      .replace(/resultado do dia/gi, "")
-      .trim(),
+  const hoje = new Date().toISOString().split("T")[0];
 
-    p1: item.p1,
-    p2: item.p2,
-    p3: item.p3,
-    p4: item.p4,
-    p5: item.p5
-  }));
+  for(const banca in dados){
 
-  return lista;
-}
+    for(const item of dados[banca]){
 
-//////////////////////////////////////////////////
-// 💾 HISTÓRICO
-//////////////////////////////////////////////////
+      await Resultado.findOneAndUpdate(
+        { data: hoje, banca, horario: item.horario },
+        { ...item, data: hoje, banca },
+        { upsert: true }
+      );
 
-function lerHistorico(){
-  try{
-    if(!fs.existsSync(HISTORICO_FILE)) return {};
-    const data = fs.readFileSync(HISTORICO_FILE);
-    if(!data || data.length === 0) return {};
-    return JSON.parse(data);
-  }catch{
-    return {};
-  }
-}
-
-function salvarHistorico(dadosHoje){
-
-  let historico = lerHistorico();
-
-  let dataBase = new Date().toISOString().split("T")[0];
-
-  try{
-    const exemplo =
-      dadosHoje.rio?.[0]?.horario ||
-      dadosHoje.look?.[0]?.horario ||
-      dadosHoje.nacional?.[0]?.horario ||
-      dadosHoje.federal?.[0]?.horario;
-
-    const match = exemplo?.match(/\d{2}\/\d{2}\/\d{4}/);
-
-    if(match){
-      const [d,m,a] = match[0].split("/");
-      dataBase = `${a}-${m}-${d}`;
     }
 
-  }catch{}
-
-  // 🔥 garante estrutura
-  if(!historico[dataBase]){
-    historico[dataBase] = {
-      rio: [],
-      look: [],
-      nacional: [],
-      federal: []
-    };
   }
 
-  const bancas = ["rio","look","nacional","federal"];
+}
 
-  bancas.forEach(banca => {
+//////////////////////////////////////////////////
+// 📊 PEGAR HISTÓRICO
+//////////////////////////////////////////////////
 
-    const novos = dadosHoje[banca] || [];
-    const antigos = historico[dataBase][banca] || [];
+async function pegarHistorico(){
 
-    // 🔥 remove duplicados por horário
-    const mapa = {};
+  const dados = await Resultado.find().lean();
 
-    antigos.forEach(i => mapa[i.horario] = i);
-    novos.forEach(i => mapa[i.horario] = i);
+  const historico = {};
 
-    historico[dataBase][banca] = Object.values(mapa);
+  dados.forEach(r=>{
+
+    if(!historico[r.data]){
+      historico[r.data] = {
+        rio: [],
+        look: [],
+        nacional: [],
+        federal: []
+      };
+    }
+
+    historico[r.data][r.banca].push(r);
 
   });
 
-  // 🔥 mantém só 7 dias
-  const datas = Object.keys(historico)
-    .sort((a,b)=> new Date(b) - new Date(a))
-    .slice(0,7);
-
-  const novo = {};
-  datas.forEach(d => novo[d] = historico[d]);
-
-  fs.writeFileSync(HISTORICO_FILE, JSON.stringify(novo, null, 2));
+  return historico;
 }
 
 //////////////////////////////////////////////////
@@ -214,19 +167,13 @@ async function carregarTudo(){
     return cache;
   }
 
-  console.log("🔄 Atualizando dados...");
+  console.log("🔄 atualizando...");
 
-  const bancas = await pegarBancas();
-  const federal = await pegarFederal();
+  const dados = await pegarTudo();
 
-  const dadosHoje = {
-    ...bancas,
-    federal
-  };
+  await salvarMongo(dados);
 
-  salvarHistorico(dadosHoje);
-
-  const historico = lerHistorico();
+  const historico = await pegarHistorico();
 
   cache = {
     atualizado: new Date().toLocaleString(),
@@ -252,5 +199,5 @@ app.get("/resultados", async (req,res)=>{
 //////////////////////////////////////////////////
 
 app.listen(PORT, ()=>{
-  console.log("🚀 Server rodando na porta", PORT);
+  console.log("🚀 API rodando na porta", PORT);
 });
