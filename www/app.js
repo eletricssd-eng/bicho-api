@@ -5,32 +5,7 @@ let diaSelecionado = 0;
 let cacheAPI = null;
 let cacheTempo = 0;
 
-//////////////////////////////////////////////////
-// 🚀 API (SEM LOGIN)
-//////////////////////////////////////////////////
-
-async function getDataCompleto(){
-
-  const agora = Date.now();
-
-  if(cacheAPI && (agora - cacheTempo < 60000)){
-    return cacheAPI;
-  }
-
-  const res = await fetch(API);
-
-  const json = await res.json();
-
-  cacheAPI = json;
-  cacheTempo = agora;
-
-  return json;
-}
-
-//////////////////////////////////////////////////
-// 🐾 BICHOS
-//////////////////////////////////////////////////
-
+// ================= BICHOS =================
 const bichos = [
 ["01","🦩","Avestruz"],["02","🦅","Águia"],["03","🐴","Burro"],
 ["04","🦋","Borboleta"],["05","🐶","Cachorro"],["06","🐐","Cabra"],
@@ -43,6 +18,7 @@ const bichos = [
 ["25","🐄","Vaca"]
 ];
 
+// ================= FUNÇÕES =================
 function extrairDezena(num){
   if(!num) return null;
   let str = String(num).replace(/\D/g,"");
@@ -60,24 +36,32 @@ function getBicho(dez){
   return { grupo:g, emoji:b[1], nome:b[2] };
 }
 
-//////////////////////////////////////////////////
-// 🚀 INIT
-//////////////////////////////////////////////////
+// ================= API =================
+async function getDataCompleto(){
 
-window.onload = ()=>{
-  iniciarApp();
-};
+  const agora = Date.now();
 
+  if(cacheAPI && (agora - cacheTempo < 60000)){
+    return cacheAPI;
+  }
+
+  const res = await fetch(API);
+  const json = await res.json();
+
+  cacheAPI = json;
+  cacheTempo = agora;
+
+  return json;
+}
+
+// ================= INIT =================
 function iniciarApp(){
   renderBotoesBancas();
   renderTabela();
   abrir("home");
 }
 
-//////////////////////////////////////////////////
-// 📊 TABELA
-//////////////////////////////////////////////////
-
+// ================= TABELA =================
 function renderTabela(){
   const tabela = document.getElementById("tabela");
   if(!tabela) return;
@@ -89,10 +73,7 @@ function renderTabela(){
   `).join("");
 }
 
-//////////////////////////////////////////////////
-// 🖥️ TELAS
-//////////////////////////////////////////////////
-
+// ================= TELAS =================
 function abrir(tela){
 
   document.querySelectorAll(".tela")
@@ -102,9 +83,14 @@ function abrir(tela){
 
   const bancasBox = document.getElementById("bancasBox");
 
-  bancasBox.style.display = (tela === "home") ? "none" : "flex";
+  if(tela === "home"){
+    bancasBox.style.display = "none";
+  }else{
+    bancasBox.style.display = "flex";
+  }
 }
 
+// ================= MENU =================
 function trocarTela(tela, btn){
 
   abrir(tela);
@@ -119,10 +105,7 @@ function trocarTela(tela, btn){
   if(tela==="mapa") carregarMapa();
 }
 
-//////////////////////////////////////////////////
-// 🏦 BANCAS
-//////////////////////////////////////////////////
-
+// ================= BANCAS =================
 function renderBotoesBancas(){
 
   const box = document.getElementById("bancasBox");
@@ -145,10 +128,7 @@ function selecionarBanca(b){
   carregarMapa(b, diaSelecionado);
 }
 
-//////////////////////////////////////////////////
-// 📈 RESULTADOS
-//////////////////////////////////////////////////
-
+// ================= RESULTADOS =================
 async function carregarResultados(){
 
   const box = document.getElementById("resultadosBox");
@@ -158,22 +138,24 @@ async function carregarResultados(){
 
     const json = await getDataCompleto();
 
+    if(!json || !json.historico){
+      box.innerHTML = "❌ Sem dados";
+      return;
+    }
+
     const datas = Object.keys(json.historico)
       .sort((a,b)=> new Date(b) - new Date(a));
 
     const hoje = datas[0];
     const dadosHoje = json.historico[hoje];
 
-    let lista = dadosHoje[bancaAtual] || [];
+    let lista = dadosHoje?.[bancaAtual] || [];
 
-    // FEDERAL
     if(bancaAtual === "federal"){
       lista = [];
-
       datas.forEach(d=>{
         lista.push(...(json.historico[d].federal || []));
       });
-
       lista = lista.slice(0,1);
     }
 
@@ -185,41 +167,315 @@ async function carregarResultados(){
     const [ano,mes,dia] = hoje.split("-");
     const dataBR = `${dia}/${mes}/${ano}`;
 
-    let html = `<div class="grid-5">`;
+    let html = `
+  <div style="
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:10px;
+  ">
+`;
 
     html += lista.map(item=>{
 
-      let hora = item.horario.match(/\d{1,2}:\d{2}/)?.[0] || "??:??";
+      let horaMatch = item.horario.match(/\d{1,2}:\d{2}/);
+      let hora = horaMatch ? horaMatch[0] : "??:??";
+
+      if(!horaMatch){
+        let h = item.horario.match(/\d{1,2}h/);
+        if(h) hora = h[0].replace("h",":00");
+      }
 
       return `
         <div class="card">
-          <b>${hora}</b><br>
-          <small>${dataBR}</small><br><br>
-
-          1º → <b>${item.p1}</b><br>
-          2º → <b>${item.p2}</b><br>
-          3º → <b>${item.p3}</b><br>
-          4º → <b>${item.p4}</b><br>
-          5º → <b>${item.p5}</b>
+          <b>${hora}</b><br><small>${dataBR}</small><br><br>
+          1º ${item.p1}<br>
+          2º ${item.p2}<br>
+          3º ${item.p3}<br>
+          4º ${item.p4}<br>
+          5º ${item.p5}
         </div>
       `;
     }).join("");
 
     html += `</div>`;
-
     box.innerHTML = html;
 
   }catch{
-    box.innerHTML = "❌ erro ao carregar";
+    box.innerHTML = "❌ Erro";
   }
 }
 
-//////////////////////////////////////////////////
-// 📋 COPIAR
-//////////////////////////////////////////////////
+// ================= ANALISE =================
+async function carregarAnalise(){
 
+  const box = document.getElementById("analiseBox");
+  box.innerHTML="⏳";
+
+  const json = await getDataCompleto();
+
+  if(!json || !json.historico){
+    box.innerHTML = "❌ Sem dados";
+    return;
+  }
+
+  const datas = Object.keys(json.historico)
+    .sort((a,b)=> new Date(b) - new Date(a))
+    .slice(0,7);
+
+  let freq = {};
+
+  bichos.forEach((b,i)=>{
+    const g=i+1;
+    freq[g]={};
+    for(let i2=1;i2<=4;i2++){
+      let dez=(g-1)*4+i2;
+      if(g===25 && i2===4) dez=0;
+      dez=String(dez).padStart(2,"0");
+      freq[g][dez]=0;
+    }
+  });
+
+  datas.forEach(d=>{
+    const lista = json.historico[d]?.[bancaAtual]||[];
+    lista.forEach(item=>{
+      [item.p1,item.p2,item.p3,item.p4,item.p5].forEach(n=>{
+        const dez=extrairDezena(n);
+        const g=getGrupo(dez);
+        if(freq[g] && freq[g][dez]!=undefined){
+          freq[g][dez]++;
+        }
+      });
+    });
+  });
+
+  box.innerHTML = `
+    <div class="grid-5">
+      ${bichos.map((b,i)=>{
+        const g=i+1;
+        return `<div class="card">${b[1]}<br>${
+          Object.entries(freq[g]).map(d=>`${d[0]}:${d[1]}`).join("<br>")
+        }</div>`;
+      }).join("")}
+    </div>
+  `;
+}
+
+// ================= MAPA =================
+function renderBotoesMapa(){
+
+  const box = document.getElementById("mapaBotoes");
+
+  box.innerHTML = [0,1,2,3,4,5,6].map(d=>`
+    <button onclick="carregarMapa('${bancaAtual}',${d})"
+      style="background:${d===diaSelecionado?'#333':'#ddd'};">
+      ${d===0?"Hoje":"Dia "+(d+1)}
+    </button>
+  `).join("");
+}
+
+async function carregarMapa(banca="rio", dia=0){
+
+  bancaAtual = banca;
+  diaSelecionado = dia;
+
+  renderBotoesMapa();
+
+  const box = document.getElementById("mapaGrid");
+  box.innerHTML = "⏳";
+
+  const json = await getDataCompleto();
+
+  if(!json || !json.historico){
+    box.innerHTML = "❌ Sem dados";
+    return;
+  }
+
+  const datas = Object.keys(json.historico)
+    .sort((a,b)=> new Date(b)-new Date(a));
+
+  let dados = json.historico[datas[dia]]?.[bancaAtual] || [];
+
+  let freq = {};
+  bichos.forEach(b => freq[b[1]] = 0);
+
+  dados.forEach(i=>{
+    const dez = extrairDezena(i.p1);
+    if(!dez) return;
+    const b = getBicho(dez);
+    freq[b.emoji]++;
+  });
+
+  const cor = v=>{
+    if(v>=3) return "#ff4d4d";
+    if(v==2) return "#ffd54f";
+    if(v==1) return "#a5d6a7";
+    return "#eee";
+  };
+
+  box.innerHTML = `
+    <div class="grid-5">
+      ${bichos.map(b=>{
+        const v = freq[b[1]];
+        return `<div style="background:${cor(v)};padding:10px;border-radius:10px;text-align:center;">
+          ${b[1]}<br><b>${v}x</b>
+        </div>`;
+      }).join("")}
+    </div>
+  `;
+}
+
+// ================= PALPITE =================
+async function carregarPalpite(banca = bancaAtual){
+
+  const box = document.getElementById("palpiteBox");
+  box.innerHTML = "⏳ gerando palpites...";
+
+  try{
+
+    const json = await getDataCompleto();
+
+    if(!json || !json.historico){
+      box.innerHTML = "❌ dados inválidos da API";
+      return;
+    }
+
+    const historico = json.historico;
+
+    const datas = Object.keys(historico)
+      .sort((a,b)=> new Date(b) - new Date(a))
+      .slice(0,7);
+
+    let grupos={}, dezenas={}, centenas={}, milhares={};
+
+    datas.forEach(d=>{
+
+      const lista = historico[d]?.[banca] || [];
+
+      lista.forEach(item=>{
+
+        [item.p1,item.p2,item.p3,item.p4,item.p5].forEach(num=>{
+
+          if(!num) return;
+
+          let n = String(num).padStart(4,"0");
+
+          const dez = n.slice(-2);
+          const cen = n.slice(-3);
+          const mil = n;
+
+          dezenas[dez]=(dezenas[dez]||0)+1;
+          centenas[cen]=(centenas[cen]||0)+1;
+          milhares[mil]=(milhares[mil]||0)+1;
+
+          const grupo = (dez === "00") ? 25 : Math.ceil(parseInt(dez)/4);
+          grupos[grupo]=(grupos[grupo]||0)+1;
+
+        });
+
+      });
+
+    });
+
+    // 🔥 pega TOP
+    const top = (obj,n)=>
+      Object.entries(obj)
+        .sort((a,b)=>b[1]-a[1])
+        .slice(0,n)
+        .map(i=>i[0]);
+
+    const gTop = top(grupos,3);
+    const dTop = top(dezenas,3);
+    const cTop = top(centenas,3);
+    const mTop = top(milhares,3);
+
+    // 🔥 DUQUE
+    const duque = (arr)=>{
+      let out=[];
+      for(let i=0;i<arr.length;i++){
+        for(let j=i+1;j<arr.length;j++){
+          out.push(`${arr[i]}-${arr[j]}`);
+        }
+      }
+      return out;
+    };
+
+    // 🔥 TERNO
+    const terno = (arr)=>{
+      if(arr.length < 3) return [];
+      return [`${arr[0]}-${arr[1]}-${arr[2]}`];
+    };
+
+    // 🔥 CARD PADRÃO
+    function card(titulo, valor){
+
+  const texto = valor.length ? valor.join(" | ") : "-";
+
+  return `
+    <div class="card" style="
+      padding:12px;
+      text-align:center;
+    ">
+
+      <b>${titulo}</b>
+
+      <div style="margin:10px 0; font-size:14px;">
+        ${valor.join("<br>")}
+      </div>
+
+      <button onclick="copiarTexto('${texto}')"
+        style="
+          background:#222;
+          color:#fff;
+          border:none;
+          border-radius:6px;
+          padding:6px 10px;
+          width:100%;
+          margin-top:8px;
+        ">
+        copiar
+      </button>
+
+    </div>
+  `;
+}
+
+    // 🔥 GRID BONITO
+    box.innerHTML = `
+  <div style="
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:10px;
+  ">
+
+    ${card("Grupo", gTop)}
+    ${card("Dezena", dTop)}
+    ${card("Centena", cTop)}
+    ${card("Milhar", mTop)}
+
+    ${card("Duque Grupo", duque(gTop))}
+    ${card("Duque Dezena", duque(dTop))}
+
+    ${card("Terno Grupo", terno(gTop))}
+    ${card("Terno Dezena", terno(dTop))}
+
+  </div>
+`;
+
+  }catch(e){
+    console.error(e);
+    box.innerHTML = "❌ erro ao gerar palpite";
+  }
+}
+
+// ================= INIT =================
+window.onload = ()=>{
+  iniciarApp();
+};
+window.gerarPalpite = function(){
+  carregarPalpite(bancaAtual);
+};
 window.copiarTexto = function(texto){
   navigator.clipboard.writeText(texto)
     .then(()=> alert("✅ Copiado!"))
-    .catch(()=> alert("❌ Erro"));
+    .catch(()=> alert("❌ Erro ao copiar"));
 };

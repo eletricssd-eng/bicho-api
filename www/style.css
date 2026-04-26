@@ -149,3 +149,57 @@ h1 {
     font-size: 12px;
   }
 }
+body{
+  margin:0;
+  padding:0;
+  font-family: Arial;
+}
+
+/* GRID PADRÃO DO APP */
+.grid-3{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:10px;
+}
+
+/* TABLETA E CELULAR */
+@media (max-width: 900px){
+  .grid-3{
+    grid-template-columns:repeat(2,1fr);
+  }
+}
+
+/* CELULAR PEQUENO */
+@media (max-width: 500px){
+  .grid-3{
+    grid-template-columns:repeat(2,1fr);
+    gap:8px;
+  }
+}
+.grid-home{
+  display:grid;
+  grid-template-columns:repeat(5,1fr);
+  gap:6px;
+}
+
+/* tablet */
+@media (max-width: 900px){
+  .grid-home{
+    grid-template-columns:repeat(4,1fr);
+  }
+}
+
+/* celular */
+@media (max-width: 600px){
+  .grid-home{
+    grid-template-columns:repeat(3,1fr);
+  }
+}
+
+/* cards menores */
+.bicho{
+  padding:6px;
+  font-size:12px;
+  text-align:center;
+  border-radius:8px;
+}

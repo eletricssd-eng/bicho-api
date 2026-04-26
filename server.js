@@ -116,10 +116,50 @@ async function pegarTudo(){
     scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
     scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
     scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje"),
-    scraper("https://www.resultadofacil.com.br/resultado-banca-federal")
+    pegarFederalUltimo()
   ]);
 
   return { rio, look, nacional, federal };
+}
+
+/////////////////////////////////////////////////////
+//  PEGAR FEDERAL
+/////////////////////////////////////////////////////
+
+async function pegarFederalUltimo(){
+
+  const { data } = await axios.get(
+    "https://www.resultadofacil.com.br/resultado-banca-federal",
+    { headers: { "User-Agent": "Mozilla/5.0" } }
+  );
+
+  const $ = cheerio.load(data);
+
+  let ultimo = null;
+
+  $("table").each((i, tabela)=>{
+
+    const nums = [];
+
+    $(tabela).find("tr").each((i,tr)=>{
+      const m = $(tr).text().match(/\d{4}/);
+      if(m) nums.push(m[0]);
+    });
+
+    if(nums.length >= 5){
+      ultimo = {
+        horario: "Último sorteio",
+        p1: nums[0],
+        p2: nums[1],
+        p3: nums[2],
+        p4: nums[3],
+        p5: nums[4]
+      };
+    }
+
+  });
+
+  return ultimo ? [ultimo] : [];
 }
 
 //////////////////////////////////////////////////
