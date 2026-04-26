@@ -11,7 +11,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 //////////////////////////////////////////////////
-// 🔥 MONGO (VERSÃO PROFISSIONAL)
+// 🔥 MONGO
 //////////////////////////////////////////////////
 
 const MONGO_URL = process.env.MONGO_URL;
@@ -32,8 +32,6 @@ async function conectarMongo(){
 
   }catch(e){
     console.log("❌ erro mongo:", e.message);
-
-    // 🔥 tenta reconectar sozinho
     setTimeout(conectarMongo, 5000);
   }
 
@@ -59,7 +57,7 @@ const ResultadoSchema = new mongoose.Schema({
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER
+// 🔍 SCRAPER PADRÃO
 //////////////////////////////////////////////////
 
 async function scraper(url){
@@ -107,50 +105,74 @@ async function scraper(url){
 }
 
 //////////////////////////////////////////////////
-// 🏦 BANCAS
-//////////////////////////////////////////////////
-
-async function pegarBancas(){
-  return {
-    rio: await scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
-    look: await scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
-    nacional: await scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje")
-  };
-}
-
-//////////////////////////////////////////////////
-// 🇧🇷 FEDERAL (CORRIGIDA)
+// 🇧🇷 FEDERAL (PEGA SÓ O ÚLTIMO)
 //////////////////////////////////////////////////
 
 async function pegarFederal(){
-  let lista = await scraper("https://www.resultadofacil.com.br/resultado-banca-federal");
 
-  // 🔥 FORÇA PADRÃO 1 AO 5 + LIMPA TEXTO
-  lista = lista.map(item => ({
-    horario: item.horario
-      .replace(/1 ao 10º?/gi, "")
-      .replace(/1 ao 5º?/gi, "")
-      .replace(/resultado do dia/gi, "")
-      .trim(),
+  try{
+    const { data } = await axios.get(
+      "https://www.resultadofacil.com.br/resultado-banca-federal",
+      { headers:{ "User-Agent":"Mozilla/5.0" } }
+    );
 
-    p1: item.p1,
-    p2: item.p2,
-    p3: item.p3,
-    p4: item.p4,
-    p5: item.p5
-  }));
+    const $ = cheerio.load(data);
 
-  return lista;
+    let ultimo = null;
+
+    $("table").each((i, tabela)=>{
+
+      const nums = [];
+
+      $(tabela).find("tr").each((i,tr)=>{
+        const m = $(tr).text().match(/\d{4}/);
+        if(m) nums.push(m[0]);
+      });
+
+      if(nums.length >= 5){
+        ultimo = {
+          horario: "Último sorteio",
+          p1: nums[0],
+          p2: nums[1],
+          p3: nums[2],
+          p4: nums[3],
+          p5: nums[4]
+        };
+      }
+
+    });
+
+    return ultimo ? [ultimo] : [];
+
+  }catch{
+    return [];
+  }
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR NO MONGO
+// 🏦 TODAS BANCAS (COM PROMISE.ALL)
+//////////////////////////////////////////////////
+
+async function pegarTudo(){
+
+  const [rio, look, nacional, federal] = await Promise.all([
+    scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
+    scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
+    scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje"),
+    pegarFederal()
+  ]);
+
+  return { rio, look, nacional, federal };
+}
+
+//////////////////////////////////////////////////
+// 💾 SALVAR
 //////////////////////////////////////////////////
 
 async function salvarMongo(dados){
 
   if(mongoose.connection.readyState !== 1){
-    console.log("⚠️ Mongo não conectado, pulando save");
+    console.log("⚠️ Mongo offline");
     return;
   }
 
@@ -160,15 +182,11 @@ async function salvarMongo(dados){
 
     for(const item of dados[banca]){
 
-      try{
-        await Resultado.findOneAndUpdate(
-          { data: hoje, banca, horario: item.horario },
-          { ...item, data: hoje, banca },
-          { upsert: true }
-        );
-      }catch(e){
-        console.log("❌ erro salvar:", e.message);
-      }
+      await Resultado.findOneAndUpdate(
+        { data: hoje, banca, horario: item.horario },
+        { ...item, data: hoje, banca },
+        { upsert: true }
+      );
 
     }
 
@@ -183,7 +201,6 @@ async function salvarMongo(dados){
 async function pegarHistorico(){
 
   if(mongoose.connection.readyState !== 1){
-    console.log("⚠️ Mongo offline, retornando vazio");
     return {};
   }
 
