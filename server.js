@@ -11,18 +11,35 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 //////////////////////////////////////////////////
-// 🔥 MONGO
+// 🔥 MONGO (VERSÃO PROFISSIONAL)
 //////////////////////////////////////////////////
 
 const MONGO_URL = process.env.MONGO_URL;
 
-if(!MONGO_URL){
-  console.log("❌ MONGO_URL NÃO DEFINIDA");
-}else{
-  mongoose.connect(MONGO_URL)
-    .then(()=> console.log("✅ Mongo conectado"))
-    .catch(e=> console.log("❌ erro mongo:", e));
+async function conectarMongo(){
+
+  if(!MONGO_URL){
+    console.log("❌ MONGO_URL NÃO DEFINIDA");
+    return;
+  }
+
+  try{
+    await mongoose.connect(MONGO_URL, {
+      serverSelectionTimeoutMS: 5000
+    });
+
+    console.log("✅ Mongo conectado");
+
+  }catch(e){
+    console.log("❌ erro mongo:", e.message);
+
+    // 🔥 tenta reconectar sozinho
+    setTimeout(conectarMongo, 5000);
+  }
+
 }
+
+conectarMongo();
 
 //////////////////////////////////////////////////
 // 📦 MODEL
@@ -47,8 +64,10 @@ const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 async function scraper(url){
   try{
+
     const { data } = await axios.get(url, {
-      headers:{ "User-Agent":"Mozilla/5.0" }
+      headers:{ "User-Agent":"Mozilla/5.0" },
+      timeout: 10000
     });
 
     const $ = cheerio.load(data);
@@ -81,7 +100,8 @@ async function scraper(url){
 
     return lista;
 
-  }catch{
+  }catch(e){
+    console.log("❌ erro scraper:", url);
     return [];
   }
 }
@@ -92,12 +112,14 @@ async function scraper(url){
 
 async function pegarTudo(){
 
-  return {
-    rio: await scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
-    look: await scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
-    nacional: await scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje"),
-    federal: await scraper("https://www.resultadofacil.com.br/resultado-banca-federal")
-  };
+  const [rio, look, nacional, federal] = await Promise.all([
+    scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
+    scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
+    scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje"),
+    scraper("https://www.resultadofacil.com.br/resultado-banca-federal")
+  ]);
+
+  return { rio, look, nacional, federal };
 }
 
 //////////////////////////////////////////////////
@@ -106,17 +128,26 @@ async function pegarTudo(){
 
 async function salvarMongo(dados){
 
+  if(mongoose.connection.readyState !== 1){
+    console.log("⚠️ Mongo não conectado, pulando save");
+    return;
+  }
+
   const hoje = new Date().toISOString().split("T")[0];
 
   for(const banca in dados){
 
     for(const item of dados[banca]){
 
-      await Resultado.findOneAndUpdate(
-        { data: hoje, banca, horario: item.horario },
-        { ...item, data: hoje, banca },
-        { upsert: true }
-      );
+      try{
+        await Resultado.findOneAndUpdate(
+          { data: hoje, banca, horario: item.horario },
+          { ...item, data: hoje, banca },
+          { upsert: true }
+        );
+      }catch(e){
+        console.log("❌ erro salvar:", e.message);
+      }
 
     }
 
@@ -125,10 +156,15 @@ async function salvarMongo(dados){
 }
 
 //////////////////////////////////////////////////
-// 📊 PEGAR HISTÓRICO
+// 📊 HISTÓRICO
 //////////////////////////////////////////////////
 
 async function pegarHistorico(){
+
+  if(mongoose.connection.readyState !== 1){
+    console.log("⚠️ Mongo offline, retornando vazio");
+    return {};
+  }
 
   const dados = await Resultado.find().lean();
 
@@ -153,7 +189,7 @@ async function pegarHistorico(){
 }
 
 //////////////////////////////////////////////////
-// 🚀 MAIN
+// 🚀 CACHE
 //////////////////////////////////////////////////
 
 let cache = null;
@@ -163,7 +199,7 @@ async function carregarTudo(){
 
   const agora = Date.now();
 
-  if(cache && agora - tempo < 60000){
+  if(cache && (agora - tempo < 60000)){
     return cache;
   }
 
@@ -186,8 +222,12 @@ async function carregarTudo(){
 }
 
 //////////////////////////////////////////////////
-// 🌐 ROTA
+// 🌐 ROTAS
 //////////////////////////////////////////////////
+
+app.get("/", (req,res)=>{
+  res.send("✅ API ONLINE");
+});
 
 app.get("/resultados", async (req,res)=>{
   const dados = await carregarTudo();
