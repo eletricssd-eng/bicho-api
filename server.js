@@ -110,56 +110,37 @@ async function scraper(url){
 // 🏦 BANCAS
 //////////////////////////////////////////////////
 
-async function pegarTudo(){
-
-  const [rio, look, nacional, federal] = await Promise.all([
-    scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
-    scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
-    scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje"),
-    pegarFederalUltimo()
-  ]);
-
-  return { rio, look, nacional, federal };
+async function pegarBancas(){
+  return {
+    rio: await scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
+    look: await scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
+    nacional: await scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje")
+  };
 }
 
-/////////////////////////////////////////////////////
-//  PEGAR FEDERAL
-/////////////////////////////////////////////////////
+//////////////////////////////////////////////////
+// 🇧🇷 FEDERAL (CORRIGIDA)
+//////////////////////////////////////////////////
 
-async function pegarFederalUltimo(){
+async function pegarFederal(){
+  let lista = await scraper("https://www.resultadofacil.com.br/resultado-banca-federal");
 
-  const { data } = await axios.get(
-    "https://www.resultadofacil.com.br/ultimos-resultados-federal",
-    { headers: { "User-Agent": "Mozilla/5.0" } }
-  );
+  // 🔥 FORÇA PADRÃO 1 AO 5 + LIMPA TEXTO
+  lista = lista.map(item => ({
+    horario: item.horario
+      .replace(/1 ao 10º?/gi, "")
+      .replace(/1 ao 5º?/gi, "")
+      .replace(/resultado do dia/gi, "")
+      .trim(),
 
-  const $ = cheerio.load(data);
+    p1: item.p1,
+    p2: item.p2,
+    p3: item.p3,
+    p4: item.p4,
+    p5: item.p5
+  }));
 
-  let ultimo = null;
-
-  $("table").each((i, tabela)=>{
-
-    const nums = [];
-
-    $(tabela).find("tr").each((i,tr)=>{
-      const m = $(tr).text().match(/\d{4}/);
-      if(m) nums.push(m[0]);
-    });
-
-    if(nums.length >= 5){
-      ultimo = {
-        horario: "Último sorteio",
-        p1: nums[0],
-        p2: nums[1],
-        p3: nums[2],
-        p4: nums[3],
-        p5: nums[4]
-      };
-    }
-
-  });
-
-  return ultimo ? [ultimo] : [];
+  return lista;
 }
 
 //////////////////////////////////////////////////
