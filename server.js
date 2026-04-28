@@ -11,41 +11,31 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 //////////////////////////////////////////////////
-// 🔥 MONGO (AUTO RECONNECT)
+// 🔥 MONGO
 //////////////////////////////////////////////////
 
 const MONGO_URL = process.env.MONGO_URL;
 
 async function conectarMongo(){
-
-  if(!MONGO_URL){
-    console.log("❌ MONGO_URL NÃO DEFINIDA");
-    return;
-  }
-
   try{
     await mongoose.connect(MONGO_URL, {
       serverSelectionTimeoutMS: 5000
     });
-
     console.log("✅ Mongo conectado");
-
   }catch(e){
     console.log("❌ erro mongo:", e.message);
     setTimeout(conectarMongo, 5000);
   }
-
 }
 
 conectarMongo();
 
 //////////////////////////////////////////////////
-// 📦 MODEL (COM UNIQUEID)
+// 📦 MODEL
 //////////////////////////////////////////////////
 
 const ResultadoSchema = new mongoose.Schema({
   uniqueId: { type: String, unique: true },
-
   data: String,
   banca: String,
   horario: String,
@@ -59,15 +49,30 @@ const ResultadoSchema = new mongoose.Schema({
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER MELHORADO
+// 🧠 FILTRO INTELIGENTE
+//////////////////////////////////////////////////
+
+function valido(n){
+  if(!n) return false;
+
+  // remove lixo comum
+  if(n === "0000" || n === "9999") return false;
+
+  // evita pegar ano como número
+  if(n.startsWith("20") && n.length === 4) return false;
+
+  return true;
+}
+
+//////////////////////////////////////////////////
+// 🔍 SCRAPER LIMPO
 //////////////////////////////////////////////////
 
 async function scraper(url){
   try{
-
     const { data } = await axios.get(url, {
       headers:{ "User-Agent":"Mozilla/5.0" },
-      timeout: 15000
+      timeout: 10000
     });
 
     const $ = cheerio.load(data);
@@ -76,15 +81,19 @@ async function scraper(url){
     $("table").each((i, tabela)=>{
 
       let titulo = $(tabela).prevAll("h2,h3,strong").first().text().trim();
-      if(!titulo) titulo = "Horário " + (i+1);
+
+      if(!titulo) return;
+
+      // ❌ ignora resultados antigos
+      if(/ontem|anterior|resultado do dia \d{2}\/\d{2}\/(?!2026)/i.test(titulo)){
+        return;
+      }
 
       const nums = [];
 
       $(tabela).find("tr").each((i,tr)=>{
-        const match = $(tr).text().match(/\d{4}/g);
-        if(match){
-          match.forEach(n => nums.push(n));
-        }
+        const m = $(tr).text().match(/\d{4}/);
+        if(m && valido(m[0])) nums.push(m[0]);
       });
 
       if(nums.length >= 5){
@@ -100,25 +109,6 @@ async function scraper(url){
 
     });
 
-    // 🔥 fallback
-    if(lista.length === 0){
-
-      const texto = $("body").text();
-      const numeros = texto.match(/\d{4}/g);
-
-      if(numeros && numeros.length >= 5){
-        lista.push({
-          horario: "Extração",
-          p1: numeros[0],
-          p2: numeros[1],
-          p3: numeros[2],
-          p4: numeros[3],
-          p5: numeros[4]
-        });
-      }
-
-    }
-
     return lista;
 
   }catch(e){
@@ -128,16 +118,47 @@ async function scraper(url){
 }
 
 //////////////////////////////////////////////////
-// 🇧🇷 FEDERAL (ÚLTIMO)
+// 🇧🇷 FEDERAL (SÓ 1 RESULTADO REAL)
 //////////////////////////////////////////////////
 
 async function pegarFederal(){
+  try{
+    const { data } = await axios.get(
+      "https://www.resultadofacil.com.br/resultado-banca-federal",
+      { headers:{ "User-Agent":"Mozilla/5.0" } }
+    );
 
-  const lista = await scraper(
-    "https://www.resultadofacil.com.br/resultado-banca-federal"
-  );
+    const $ = cheerio.load(data);
 
-  return lista.length ? [lista[0]] : [];
+    let resultado = null;
+
+    $("table").each((i, tabela)=>{
+
+      const nums = [];
+
+      $(tabela).find("tr").each((i,tr)=>{
+        const m = $(tr).text().match(/\d{4}/);
+        if(m && valido(m[0])) nums.push(m[0]);
+      });
+
+      if(nums.length >= 5 && !resultado){
+        resultado = {
+          horario: "Federal",
+          p1: nums[0],
+          p2: nums[1],
+          p3: nums[2],
+          p4: nums[3],
+          p5: nums[4]
+        };
+      }
+
+    });
+
+    return resultado ? [resultado] : [];
+
+  }catch{
+    return [];
+  }
 }
 
 //////////////////////////////////////////////////
@@ -145,7 +166,6 @@ async function pegarFederal(){
 //////////////////////////////////////////////////
 
 async function pegarTudo(){
-
   const [rio, look, nacional, federal] = await Promise.all([
     scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
     scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
@@ -157,13 +177,13 @@ async function pegarTudo(){
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR (SEM DUPLICAR)
+// 💾 SALVAR SEM DUPLICAR
 //////////////////////////////////////////////////
 
 async function salvarMongo(dados){
 
   if(mongoose.connection.readyState !== 1){
-    console.log("⚠️ Mongo offline - não salvou");
+    console.log("⚠️ Mongo offline");
     return;
   }
 
@@ -173,16 +193,14 @@ async function salvarMongo(dados){
 
     for(const item of dados[banca]){
 
+      const uniqueId = `${hoje}-${banca}-${item.horario}`;
+
       try{
-
-        const uniqueId = `${hoje}-${banca}-${item.horario}`;
-
-        await Resultado.findOneAndUpdate(
+        await Resultado.updateOne(
           { uniqueId },
           { ...item, data: hoje, banca, uniqueId },
           { upsert: true }
         );
-
       }catch(e){
         console.log("❌ erro salvar:", e.message);
       }
@@ -194,15 +212,10 @@ async function salvarMongo(dados){
 }
 
 //////////////////////////////////////////////////
-// 📊 HISTÓRICO
+// 📊 HISTÓRICO LIMPO
 //////////////////////////////////////////////////
 
 async function pegarHistorico(){
-
-  if(mongoose.connection.readyState !== 1){
-    console.log("⚠️ Mongo offline");
-    return {};
-  }
 
   const dados = await Resultado.find().lean();
 
@@ -260,7 +273,7 @@ async function carregarTudo(){
 }
 
 //////////////////////////////////////////////////
-// 🌐 ROTAS (ANTI-CRASH)
+// 🌐 ROTAS
 //////////////////////////////////////////////////
 
 app.get("/", (req,res)=>{
@@ -272,11 +285,7 @@ app.get("/resultados", async (req,res)=>{
     const dados = await carregarTudo();
     res.json(dados);
   }catch(e){
-    console.log("❌ ERRO GERAL:", e.message);
-    res.status(500).json({
-      erro: "Erro interno",
-      detalhe: e.message
-    });
+    res.status(500).json({ erro: "erro interno" });
   }
 });
 
