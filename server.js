@@ -3,138 +3,49 @@ import axios from "axios";
 import cors from "cors";
 import * as cheerio from "cheerio";
 import mongoose from "mongoose";
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const SECRET = process.env.JWT_SECRET || "segredo";
 
 //////////////////////////////////////////////////
-// 🔥 MONGO
+// 🔥 MONGO (AUTO RECONNECT)
 //////////////////////////////////////////////////
 
 const MONGO_URL = process.env.MONGO_URL;
 
-async function conectarMongo() {
-  try {
+async function conectarMongo(){
+
+  if(!MONGO_URL){
+    console.log("❌ MONGO_URL NÃO DEFINIDA");
+    return;
+  }
+
+  try{
     await mongoose.connect(MONGO_URL, {
       serverSelectionTimeoutMS: 5000
     });
+
     console.log("✅ Mongo conectado");
-  } catch (e) {
+
+  }catch(e){
     console.log("❌ erro mongo:", e.message);
     setTimeout(conectarMongo, 5000);
   }
+
 }
 
 conectarMongo();
 
 //////////////////////////////////////////////////
-// 👤 USER MODEL (NOVO)
-//////////////////////////////////////////////////
-
-const UsuarioSchema = new mongoose.Schema({
-  usuario: { type: String, unique: true },
-  senha: String
-});
-
-const Usuario = mongoose.model("Usuario", UsuarioSchema);
-
-//////////////////////////////////////////////////
-// 🔐 AUTH MIDDLEWARE (NOVO)
-//////////////////////////////////////////////////
-
-function auth(req, res, next){
-
-  const token = req.headers.authorization;
-
-  if(!token){
-    return res.status(401).json({ erro: "Sem token" });
-  }
-
-  try{
-    const decoded = jwt.verify(token, SECRET);
-    req.userId = decoded.id;
-    next();
-  }catch{
-    return res.status(401).json({ erro: "Token inválido" });
-  }
-}
-
-//////////////////////////////////////////////////
-// 📝 CADASTRO (NOVO)
-//////////////////////////////////////////////////
-
-app.post("/cadastro", async (req, res) => {
-
-  try{
-
-    const { usuario, senha } = req.body;
-
-    if(!usuario || !senha){
-      return res.status(400).json({ erro: "Preencha tudo" });
-    }
-
-    const existe = await Usuario.findOne({ usuario });
-
-    if(existe){
-      return res.status(400).json({ erro: "Usuário já existe" });
-    }
-
-    const hash = await bcrypt.hash(senha, 10);
-
-    await Usuario.create({ usuario, senha: hash });
-
-    res.json({ ok: true });
-
-  }catch(e){
-    res.status(500).json({ erro: "Erro no cadastro" });
-  }
-});
-
-//////////////////////////////////////////////////
-// 🔑 LOGIN (NOVO)
-//////////////////////////////////////////////////
-
-app.post("/login", async (req, res) => {
-
-  try{
-
-    const { usuario, senha } = req.body;
-
-    const user = await Usuario.findOne({ usuario });
-
-    if(!user){
-      return res.status(400).json({ erro: "Usuário não existe" });
-    }
-
-    const ok = await bcrypt.compare(senha, user.senha);
-
-    if(!ok){
-      return res.status(400).json({ erro: "Senha inválida" });
-    }
-
-    const token = jwt.sign({ id: user._id }, SECRET, {
-      expiresIn: "7d"
-    });
-
-    res.json({ token });
-
-  }catch(e){
-    res.status(500).json({ erro: "Erro no login" });
-  }
-});
-
-//////////////////////////////////////////////////
-// 📦 MODEL RESULTADO (SEU ORIGINAL)
+// 📦 MODEL (COM UNIQUEID)
 //////////////////////////////////////////////////
 
 const ResultadoSchema = new mongoose.Schema({
   uniqueId: { type: String, unique: true },
+
   data: String,
   banca: String,
   horario: String,
@@ -148,53 +59,35 @@ const ResultadoSchema = new mongoose.Schema({
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
-// 🧠 VALIDAÇÃO FORTE (SEU)
+// 🔍 SCRAPER MELHORADO
 //////////////////////////////////////////////////
 
-function resultadoValido(r) {
-  const invalidos = [
-    "0000","1111","2222","3333","4444",
-    "5555","6666","7777","8888","9999","2026"
-  ];
+async function scraper(url){
+  try{
 
-  const lista = [r.p1, r.p2, r.p3, r.p4, r.p5];
-
-  if (lista.some(n => invalidos.includes(n))) return false;
-  if (r.horario.toLowerCase().includes("extra")) return false;
-
-  return true;
-}
-
-//////////////////////////////////////////////////
-// 🔍 SCRAPER (SEU)
-//////////////////////////////////////////////////
-
-async function scraper(url) {
-  try {
     const { data } = await axios.get(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        "Accept-Language": "pt-BR"
-      },
+      headers:{ "User-Agent":"Mozilla/5.0" },
       timeout: 15000
     });
 
     const $ = cheerio.load(data);
     const lista = [];
 
-    $("table").each((i, tabela) => {
+    $("table").each((i, tabela)=>{
 
       let titulo = $(tabela).prevAll("h2,h3,strong").first().text().trim();
-      if (!titulo) return;
+      if(!titulo) titulo = "Horário " + (i+1);
 
       const nums = [];
 
-      $(tabela).find("tr").each((i, tr) => {
+      $(tabela).find("tr").each((i,tr)=>{
         const match = $(tr).text().match(/\d{4}/g);
-        if (match) match.forEach(n => nums.push(n));
+        if(match){
+          match.forEach(n => nums.push(n));
+        }
       });
 
-      if (nums.length >= 5) {
+      if(nums.length >= 5){
         lista.push({
           horario: titulo,
           p1: nums[0],
@@ -204,56 +97,84 @@ async function scraper(url) {
           p5: nums[4]
         });
       }
+
     });
+
+    // 🔥 fallback
+    if(lista.length === 0){
+
+      const texto = $("body").text();
+      const numeros = texto.match(/\d{4}/g);
+
+      if(numeros && numeros.length >= 5){
+        lista.push({
+          horario: "Extração",
+          p1: numeros[0],
+          p2: numeros[1],
+          p3: numeros[2],
+          p4: numeros[3],
+          p5: numeros[4]
+        });
+      }
+
+    }
 
     return lista;
 
-  } catch (e) {
-    console.log("❌ erro scraper:", url, e.message);
+  }catch(e){
+    console.log("❌ erro scraper:", url);
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🏦 BANCAS (SEU)
+// 🇧🇷 FEDERAL (ÚLTIMO)
 //////////////////////////////////////////////////
 
-async function pegarTudo() {
+async function pegarFederal(){
+
+  const lista = await scraper(
+    "https://www.resultadofacil.com.br/resultado-banca-federal"
+  );
+
+  return lista.length ? [lista[0]] : [];
+}
+
+//////////////////////////////////////////////////
+// 🏦 TODAS BANCAS
+//////////////////////////////////////////////////
+
+async function pegarTudo(){
 
   const [rio, look, nacional, federal] = await Promise.all([
     scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
     scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
     scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje"),
-    scraper("https://www.resultadofacil.com.br/resultado-banca-federal")
+    pegarFederal()
   ]);
 
-  return {
-    rio,
-    look,
-    nacional,
-    federal: federal.length ? [federal[0]] : []
-  };
+  return { rio, look, nacional, federal };
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR (SEU)
+// 💾 SALVAR (SEM DUPLICAR)
 //////////////////////////////////////////////////
 
-async function salvarMongo(dados) {
+async function salvarMongo(dados){
 
-  if (mongoose.connection.readyState !== 1) {
-    console.log("⚠️ Mongo offline");
+  if(mongoose.connection.readyState !== 1){
+    console.log("⚠️ Mongo offline - não salvou");
     return;
   }
 
   const hoje = new Date().toISOString().split("T")[0];
 
-  for (const banca in dados) {
-    for (const item of dados[banca]) {
+  for(const banca in dados){
 
-      if (!resultadoValido(item)) continue;
+    for(const item of dados[banca]){
 
-      try {
+      try{
+
         const uniqueId = `${hoje}-${banca}-${item.horario}`;
 
         await Resultado.findOneAndUpdate(
@@ -262,25 +183,34 @@ async function salvarMongo(dados) {
           { upsert: true }
         );
 
-      } catch (e) {
+      }catch(e){
         console.log("❌ erro salvar:", e.message);
       }
+
     }
+
   }
+
 }
 
 //////////////////////////////////////////////////
-// 📊 HISTÓRICO (SEU)
+// 📊 HISTÓRICO
 //////////////////////////////////////////////////
 
-async function pegarHistorico() {
+async function pegarHistorico(){
+
+  if(mongoose.connection.readyState !== 1){
+    console.log("⚠️ Mongo offline");
+    return {};
+  }
 
   const dados = await Resultado.find().lean();
+
   const historico = {};
 
-  dados.forEach(r => {
+  dados.forEach(r=>{
 
-    if (!historico[r.data]) {
+    if(!historico[r.data]){
       historico[r.data] = {
         rio: [],
         look: [],
@@ -290,27 +220,31 @@ async function pegarHistorico() {
     }
 
     historico[r.data][r.banca].push(r);
+
   });
 
   return historico;
 }
 
 //////////////////////////////////////////////////
-// 🚀 CACHE (SEU)
+// 🚀 CACHE
 //////////////////////////////////////////////////
 
 let cache = null;
 let tempo = 0;
 
-async function carregarTudo() {
+async function carregarTudo(){
 
   const agora = Date.now();
 
-  if (cache && (agora - tempo < 60000)) {
+  if(cache && (agora - tempo < 60000)){
     return cache;
   }
 
+  console.log("🔄 atualizando...");
+
   const dados = await pegarTudo();
+
   await salvarMongo(dados);
 
   const historico = await pegarHistorico();
@@ -326,20 +260,23 @@ async function carregarTudo() {
 }
 
 //////////////////////////////////////////////////
-// 🌐 ROTAS
+// 🌐 ROTAS (ANTI-CRASH)
 //////////////////////////////////////////////////
 
-app.get("/", (req, res) => {
+app.get("/", (req,res)=>{
   res.send("✅ API ONLINE");
 });
 
-// 🔒 AGORA PROTEGIDA
-app.get("/resultados", auth, async (req, res) => {
-  try {
+app.get("/resultados", async (req,res)=>{
+  try{
     const dados = await carregarTudo();
     res.json(dados);
-  } catch (e) {
-    res.status(500).json({ erro: e.message });
+  }catch(e){
+    console.log("❌ ERRO GERAL:", e.message);
+    res.status(500).json({
+      erro: "Erro interno",
+      detalhe: e.message
+    });
   }
 });
 
@@ -347,6 +284,6 @@ app.get("/resultados", auth, async (req, res) => {
 // 🚀 START
 //////////////////////////////////////////////////
 
-app.listen(PORT, () => {
-  console.log("🚀 Rodando na porta", PORT);
+app.listen(PORT, ()=>{
+  console.log("🚀 API rodando na porta", PORT);
 });
