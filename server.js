@@ -22,7 +22,7 @@ const ResultadoSchema = new mongoose.Schema({
   p3: String,
   p4: String,
   p5: String,
-  uniqueId: { type: String, unique: true } // 🔥 evita duplicado REAL
+  uniqueId: String
 });
 
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
@@ -32,20 +32,33 @@ function hoje() {
   return new Date().toISOString().split("T")[0];
 }
 
+// 🔥 BLOQUEIO FORTE DE RESULTADO FAKE
 function resultadoValido(r) {
-  return !["0000", "1111", "9999", "2026"].includes(r.p1);
+  const invalidos = ["0000", "1111", "2222", "3333", "4444", "5555", "6666", "7777", "8888", "9999", "2026"];
+
+  const lista = [r.p1, r.p2, r.p3, r.p4, r.p5];
+
+  // bloqueia se QUALQUER prêmio for fake
+  if (lista.some(n => invalidos.includes(n))) return false;
+
+  // bloqueia se for "Extração"
+  if (r.horario.toLowerCase().includes("extra")) return false;
+
+  return true;
 }
 
+// remove duplicados + fake + fora da data
 function limparDados(lista, dataHoje) {
   const vistos = new Set();
 
   return lista.filter(item => {
+
     if (item.data !== dataHoje) return false;
+
+    if (!resultadoValido(item)) return false;
 
     if (vistos.has(item.uniqueId)) return false;
     vistos.add(item.uniqueId);
-
-    if (!resultadoValido(item)) return false;
 
     return true;
   });
@@ -53,12 +66,12 @@ function limparDados(lista, dataHoje) {
 
 // ================= BANCA =================
 function detectarBanca(horario) {
-  horario = horario.toLowerCase();
+  const h = horario.toLowerCase();
 
-  if (horario.includes("rio")) return "rio";
-  if (horario.includes("goiás") || horario.includes("look")) return "look";
-  if (horario.includes("nacional")) return "nacional";
-  if (horario.includes("federal")) return "federal";
+  if (h.includes("rio")) return "rio";
+  if (h.includes("goiás") || h.includes("look")) return "look";
+  if (h.includes("nacional")) return "nacional";
+  if (h.includes("federal")) return "federal";
 
   return "outros";
 }
@@ -66,15 +79,13 @@ function detectarBanca(horario) {
 // ================= SCRAPER =================
 async function buscarResultados() {
   try {
-    const { data } = await axios.get(
-      "https://www.resultadosdobicho.com/resultado-do-jogo-do-bicho/",
-      { timeout: 10000 }
-    );
-
+    const { data } = await axios.get("https://www.resultadosdobicho.com/resultado-do-jogo-do-bicho/");
     const $ = cheerio.load(data);
+
     let resultados = [];
 
     $(".resultado").each((i, el) => {
+
       const horario = $(el).find("h2").text().trim();
 
       const numeros = $(el)
@@ -83,8 +94,11 @@ async function buscarResultados() {
         .get();
 
       if (numeros.length >= 5) {
-        resultados.push({
-          banca: detectarBanca(horario),
+
+        const banca = detectarBanca(horario);
+
+        const item = {
+          banca,
           data: hoje(),
           horario,
           p1: numeros[0],
@@ -92,8 +106,10 @@ async function buscarResultados() {
           p3: numeros[2],
           p4: numeros[3],
           p5: numeros[4],
-          uniqueId: `${hoje()}-${horario}-${numeros[0]}`
-        });
+          uniqueId: `${hoje()}-${banca}-${horario}`
+        };
+
+        resultados.push(item);
       }
     });
 
@@ -107,82 +123,70 @@ async function buscarResultados() {
 
 // ================= SALVAR =================
 async function atualizarBanco() {
-  try {
-    const dataHoje = hoje();
 
-    let dados = await buscarResultados();
+  const dataHoje = hoje();
 
-    dados = limparDados(dados, dataHoje);
+  let dados = await buscarResultados();
 
-    const porBanca = {
-      rio: [],
-      look: [],
-      nacional: [],
-      federal: []
-    };
+  dados = limparDados(dados, dataHoje);
 
-    dados.forEach(r => {
-      if (porBanca[r.banca]) {
-        porBanca[r.banca].push(r);
-      }
-    });
+  const porBanca = {
+    rio: [],
+    look: [],
+    nacional: [],
+    federal: []
+  };
 
-    // federal só 1
-    if (porBanca.federal.length > 1) {
-      porBanca.federal = [porBanca.federal.pop()];
+  dados.forEach(r => {
+    if (porBanca[r.banca]) {
+      porBanca[r.banca].push(r);
     }
+  });
 
-    // 🔥 insert rápido (sem findOne)
-    for (const banca in porBanca) {
-      for (const item of porBanca[banca]) {
-        try {
-          await Resultado.create(item);
-          console.log("Salvo:", item.uniqueId);
-        } catch (err) {
-          if (err.code === 11000) {
-            // duplicado ignorado
-          } else {
-            console.log("Erro ao salvar:", err.message);
-          }
-        }
+  // 🔥 FEDERAL = só 1 (último válido)
+  if (porBanca.federal.length > 0) {
+    porBanca.federal = [porBanca.federal[porBanca.federal.length - 1]];
+  }
+
+  for (const banca in porBanca) {
+    for (const item of porBanca[banca]) {
+
+      const existe = await Resultado.findOne({ uniqueId: item.uniqueId });
+
+      if (!existe) {
+        await Resultado.create(item);
+        console.log("Salvo:", item.uniqueId);
       }
     }
-
-  } catch (err) {
-    console.log("Erro geral:", err.message);
   }
 }
 
 // ================= API =================
 app.get("/resultados", async (req, res) => {
-  try {
-    const dataHoje = hoje();
 
-    const dados = await Resultado.find({ data: dataHoje });
+  const dataHoje = hoje();
 
-    const resposta = {
-      atualizado: new Date().toLocaleString(),
-      historico: {
-        [dataHoje]: {
-          rio: [],
-          look: [],
-          nacional: [],
-          federal: []
-        }
+  const dados = await Resultado.find({ data: dataHoje });
+
+  const resposta = {
+    atualizado: new Date().toLocaleString(),
+    historico: {
+      [dataHoje]: {
+        rio: [],
+        look: [],
+        nacional: [],
+        federal: []
       }
-    };
+    }
+  };
 
-    dados.forEach(r => {
-      if (resposta.historico[dataHoje][r.banca]) {
-        resposta.historico[dataHoje][r.banca].push(r);
-      }
-    });
+  dados.forEach(r => {
+    if (resposta.historico[dataHoje][r.banca]) {
+      resposta.historico[dataHoje][r.banca].push(r);
+    }
+  });
 
-    res.json(resposta);
-
-  } catch (err) {
-    res.status(500).json({ erro: "Erro no servidor" });
-  }
+  res.json(resposta);
 });
 
 // ================= AUTO UPDATE =================
@@ -191,10 +195,10 @@ setInterval(() => {
   atualizarBanco();
 }, 60000);
 
-// start inicial
+// primeira execução
 atualizarBanco();
 
 // ================= START =================
 app.listen(PORT, () => {
-  console.log("Servidor rodando na porta " + PORT);
+  console.log(`Servidor rodando na porta ${PORT}`);
 });
