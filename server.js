@@ -48,7 +48,7 @@ const ResultadoSchema = new mongoose.Schema({
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
-// 🧠 VALIDAÇÃO BLINDADA
+// 🧠 VALIDAÇÃO FORTE (ANTI LIXO)
 //////////////////////////////////////////////////
 
 function resultadoValido(r) {
@@ -56,12 +56,23 @@ function resultadoValido(r) {
 
   const lista = [r.p1, r.p2, r.p3, r.p4, r.p5];
 
-  // precisa ter 5 números
-  if (lista.length !== 5) return false;
+  // precisa existir
   if (lista.some(n => !n)) return false;
 
-  // bloqueia placeholders comuns
+  // precisa ser 4 dígitos
+  if (lista.some(n => !/^\d{4}$/.test(n))) return false;
+
+  // bloqueia repetição (1111, 9999)
   if (lista.some(n => /^(\d)\1{3}$/.test(n))) return false;
+
+  // bloqueia anos (2026 etc)
+  if (lista.some(n => n.startsWith("20"))) return false;
+
+  // bloqueia todos iguais
+  if (new Set(lista).size === 1) return false;
+
+  // bloqueia fallback fake
+  if (!r.horario || r.horario.toLowerCase().includes("extra")) return false;
 
   return true;
 }
@@ -90,7 +101,7 @@ async function fetchRetry(url, tentativas = 3) {
 }
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER BLINDADO
+// 🔍 SCRAPER
 //////////////////////////////////////////////////
 
 async function scraper(url) {
@@ -113,39 +124,33 @@ async function scraper(url) {
       });
 
       if (nums.length >= 5) {
-        const item = {
+        lista.push({
           horario: titulo,
           p1: nums[0],
           p2: nums[1],
           p3: nums[2],
           p4: nums[3],
           p5: nums[4]
-        };
-
-        if (resultadoValido(item)) {
-          lista.push(item);
-        }
+        });
       }
     });
 
-    // 🔥 fallback se HTML mudar
+    // fallback (NÃO confiável, só retorna)
     if (lista.length === 0) {
+      console.log("⚠️ fallback usado:", url);
+
       const texto = $("body").text();
       const numeros = texto.match(/\b\d{4}\b/g);
 
       if (numeros && numeros.length >= 5) {
-        const item = {
+        lista.push({
           horario: "Extração",
           p1: numeros[0],
           p2: numeros[1],
           p3: numeros[2],
           p4: numeros[3],
           p5: numeros[4]
-        };
-
-        if (resultadoValido(item)) {
-          lista.push(item);
-        }
+        });
       }
     }
 
@@ -162,6 +167,7 @@ async function scraper(url) {
 //////////////////////////////////////////////////
 
 async function pegarTudo() {
+
   const [rio, look, nacional, federalRaw] = await Promise.all([
     scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
     scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
@@ -169,13 +175,23 @@ async function pegarTudo() {
     scraper("https://www.resultadofacil.com.br/resultado-banca-federal")
   ]);
 
-  const federal = federalRaw.filter(resultadoValido).slice(0, 1);
+  // data de hoje no formato BR
+  const hojeBR = new Date().toLocaleDateString("pt-BR");
 
-  return { rio, look, nacional, federal };
+  const federal = federalRaw.filter(r =>
+    resultadoValido(r) && r.horario.includes(hojeBR)
+  ).slice(0,1);
+
+  return {
+    rio: rio.filter(resultadoValido),
+    look: look.filter(resultadoValido),
+    nacional: nacional.filter(resultadoValido),
+    federal
+  };
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR ULTRA RÁPIDO (BULK)
+// 💾 SALVAR
 //////////////////////////////////////////////////
 
 async function salvarMongo(dados) {
@@ -193,7 +209,6 @@ async function salvarMongo(dados) {
 
       if (!resultadoValido(item)) continue;
 
-      // 🔥 unique baseado nos números (nunca duplica)
       const uniqueId = `${hoje}-${banca}-${item.p1}-${item.p2}-${item.p3}`;
 
       ops.push({
@@ -208,7 +223,7 @@ async function salvarMongo(dados) {
 
   if (ops.length > 0) {
     await Resultado.bulkWrite(ops);
-    console.log("✅ salvo em lote:", ops.length);
+    console.log("✅ salvo:", ops.length);
   }
 }
 
@@ -217,11 +232,12 @@ async function salvarMongo(dados) {
 //////////////////////////////////////////////////
 
 async function pegarHistorico() {
-  const dados = await Resultado.find().lean();
 
+  const dados = await Resultado.find().lean();
   const historico = {};
 
   dados.forEach(r => {
+
     if (!historico[r.data]) {
       historico[r.data] = {
         rio: [],
@@ -230,14 +246,24 @@ async function pegarHistorico() {
         federal: []
       };
     }
+
     historico[r.data][r.banca].push(r);
   });
+
+  // ordenar horários
+  for (const data in historico) {
+    for (const banca in historico[data]) {
+      historico[data][banca].sort((a,b)=>
+        a.horario.localeCompare(b.horario)
+      );
+    }
+  }
 
   return historico;
 }
 
 //////////////////////////////////////////////////
-// 🚀 CACHE INTELIGENTE
+// 🚀 CACHE
 //////////////////////////////////////////////////
 
 let cache = null;
@@ -255,7 +281,6 @@ async function carregarTudo() {
 
   const dados = await pegarTudo();
 
-  // 🔥 se scraper falhar, não quebra app
   if (!dados.rio.length && cache) {
     console.log("⚠️ usando cache (scraper falhou)");
     return cache;
