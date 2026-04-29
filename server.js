@@ -53,7 +53,36 @@ const ResultadoSchema = new mongoose.Schema({
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER BASE (FORTE)
+// 🧠 VALIDAÇÃO (NOVO)
+//////////////////////////////////////////////////
+
+function resultadoValido(item){
+  if(!item) return false;
+
+  const nums = [item.p1, item.p2, item.p3, item.p4, item.p5];
+
+  if(nums.some(n => !n)) return false;
+  if(nums.some(n => !/^\d{4}$/.test(n))) return false;
+
+  // bloqueia repetição tipo 9999
+  const repetidos = nums.filter(n => n === nums[0]).length;
+  if(repetidos >= 3) return false;
+
+  // bloqueia ano tipo 2026
+  if(nums.some(n => n.startsWith("20"))) return false;
+
+  return true;
+}
+
+function limparHorario(texto){
+  if(!texto) return "Extração";
+
+  const match = texto.match(/\d{2}:\d{2}|\d{2}h/);
+  return match ? match[0] : "Extração";
+}
+
+//////////////////////////////////////////////////
+// 🔍 SCRAPER
 //////////////////////////////////////////////////
 
 async function scraper(url){
@@ -67,6 +96,7 @@ async function scraper(url){
     const lista = [];
 
     $("table").each((i, tabela)=>{
+
       let titulo = $(tabela).prevAll("h2,h3,strong").first().text().trim();
       if(!titulo) titulo = "Horário " + (i+1);
 
@@ -78,32 +108,47 @@ async function scraper(url){
       });
 
       if(nums.length >= 5){
-        lista.push({
-          horario: titulo,
+
+        const item = {
+          horario: limparHorario(titulo),
           p1: nums[0],
           p2: nums[1],
           p3: nums[2],
           p4: nums[3],
           p5: nums[4]
-        });
+        };
+
+        if(resultadoValido(item)){
+          lista.push(item);
+        }
+
       }
+
     });
 
-    // fallback bruto
+    // fallback controlado (agora validando)
     if(lista.length === 0){
+
       const texto = $("body").text();
       const numeros = texto.match(/\d{4}/g);
 
       if(numeros && numeros.length >= 5){
-        lista.push({
+
+        const item = {
           horario: "Extração",
           p1: numeros[0],
           p2: numeros[1],
           p3: numeros[2],
           p4: numeros[3],
           p5: numeros[4]
-        });
+        };
+
+        if(resultadoValido(item)){
+          lista.push(item);
+        }
+
       }
+
     }
 
     return lista;
@@ -115,7 +160,7 @@ async function scraper(url){
 }
 
 //////////////////////////////////////////////////
-// 🔁 TENTAR VÁRIAS FONTES
+// 🔁 FALLBACK
 //////////////////////////////////////////////////
 
 async function tentarFontes(fontes){
@@ -131,31 +176,27 @@ async function tentarFontes(fontes){
 }
 
 //////////////////////////////////////////////////
-// 🌐 FONTES POR BANCA
+// 🌐 FONTES
 //////////////////////////////////////////////////
 
 const FONTES = {
-
   rio: [
     "https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje",
     "https://resultadofacil.net/resultados-do-rio-de-hoje",
     "https://www.resultadodobichohoje.com.br/rio"
   ],
-
   look: [
     "https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje",
     "https://resultadofacil.net/look-loterias-de-hoje"
   ],
-
   nacional: [
     "https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje",
     "https://resultadofacil.net/loteria-nacional-de-hoje"
   ]
-
 };
 
 //////////////////////////////////////////////////
-// 🏦 FEDERAL (API OFICIAL)
+// 🏦 FEDERAL (CORRIGIDO)
 //////////////////////////////////////////////////
 
 async function pegarFederal(){
@@ -169,26 +210,25 @@ async function pegarFederal(){
 
     const r = data.listaResultado[0];
 
-    return [{
+    const item = {
       horario: "Federal",
       p1: r.premio1,
       p2: r.premio2,
       p3: r.premio3,
       p4: r.premio4,
       p5: r.premio5
-    }];
+    };
+
+    return resultadoValido(item) ? [item] : [];
 
   }catch(e){
-    console.log("❌ erro federal API, fallback site");
-
-    return await tentarFontes([
-      "https://www.resultadofacil.com.br/resultado-banca-federal"
-    ]);
+    console.log("❌ federal falhou — ignorando fallback");
+    return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🏦 PEGAR TODAS
+// 🏦 PEGAR TUDO
 //////////////////////////////////////////////////
 
 async function pegarTudo(){
