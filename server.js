@@ -3,6 +3,7 @@ import axios from "axios";
 import cors from "cors";
 import * as cheerio from "cheerio";
 import mongoose from "mongoose";
+import crypto from "crypto";
 
 const app = express();
 app.use(cors());
@@ -11,30 +12,28 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 //////////////////////////////////////////////////
-// 🔥 MONGO (robusto)
+// 🔥 MONGO
 //////////////////////////////////////////////////
 
-await mongoose.connect(process.env.MONGO_URL, {
-  serverSelectionTimeoutMS: 5000,
-  maxPoolSize: 10
-});
-
+await mongoose.connect(process.env.MONGO_URL);
 console.log("✅ Mongo conectado");
 
 const Resultado = mongoose.model("Resultado", new mongoose.Schema({
-  uniqueId: { type: String, unique: true, index: true },
+  uniqueId: { type: String, unique: true },
+  hash: String,
   data: String,
-  banca: { type: String, index: true },
+  banca: String,
   horario: String,
   p1: String,
   p2: String,
   p3: String,
   p4: String,
-  p5: String
-}, { timestamps: true }));
+  p5: String,
+  fonte: String
+}));
 
 //////////////////////////////////////////////////
-// 🧠 VALIDADOR ENTERPRISE
+// 🧠 VALIDAÇÃO ENTERPRISE
 //////////////////////////////////////////////////
 
 function resultadoValido(r) {
@@ -42,257 +41,239 @@ function resultadoValido(r) {
 
   const nums = [r.p1, r.p2, r.p3, r.p4, r.p5];
 
-  // formato 4 dígitos
+  // formato correto
   if (nums.some(n => !/^\d{4}$/.test(n))) return false;
 
-  // bloqueia padrões fake
-  const invalidos = new Set([
-    "0000","1111","2222","3333","4444",
-    "5555","6666","7777","8888","9999"
-  ]);
+  // lixo repetido
+  if (nums.some(n => /^(\d)\1{3}$/.test(n))) return false;
 
-  if (nums.some(n => invalidos.has(n))) return false;
+  // anti fake padrão
+  if (nums.includes("0000")) return false;
 
-  // bloqueia ano fake
-  if (nums.some(n => n.startsWith("20"))) return false;
-
-  // horário lixo
-  if (!r.horario || r.horario.toLowerCase().includes("extra")) return false;
-
-  // banca obrigatória
-  if (!r.banca) return false;
+  // bloqueia data inválida
+  if (!r.horario || r.horario.toLowerCase().includes("extração") === false && r.horario.length < 3) {
+    return false;
+  }
 
   return true;
 }
 
 //////////////////////////////////////////////////
-// 🔁 FETCH SAFE
+// 🔐 HASH (DEDUP ENTERPRISE)
+//////////////////////////////////////////////////
+
+function gerarHash(r) {
+  return crypto
+    .createHash("md5")
+    .update(`${r.p1}-${r.p2}-${r.p3}-${r.p4}-${r.p5}-${r.horario}`)
+    .digest("hex");
+}
+
+//////////////////////////////////////////////////
+// 🌐 FETCH BASE
 //////////////////////////////////////////////////
 
 async function fetchHTML(url) {
+  const { data } = await axios.get(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      "Accept-Language": "pt-BR"
+    },
+    timeout: 15000
+  });
+  return data;
+}
+
+//////////////////////////////////////////////////
+// 🔍 FONTES (ROBUSTAS)
+//////////////////////////////////////////////////
+
+async function fonteResultadoFacil() {
   try {
-    const { data } = await axios.get(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "text/html"
-      },
-      timeout: 15000
+    const html = await fetchHTML("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje");
+    const $ = cheerio.load(html);
+
+    const lista = [];
+
+    $("table").each((i, t) => {
+      const nums = $(t).text().match(/\b\d{4}\b/g);
+
+      if (nums && nums.length >= 5) {
+        lista.push({
+          horario: "RF-" + i,
+          p1: nums[0], p2: nums[1], p3: nums[2], p4: nums[3], p5: nums[4],
+          fonte: "resultadofacil"
+        });
+      }
     });
 
-    return data;
-
+    return lista;
   } catch {
-    return null;
+    return [];
   }
 }
 
-//////////////////////////////////////////////////
-// 🔍 SCRAPERS (com banca correta)
-//////////////////////////////////////////////////
+async function fonteDeuNoPoste() {
+  try {
+    const html = await fetchHTML("https://www.deunoposte.com/resultado-do-jogo-do-bicho-rj");
+    const $ = cheerio.load(html);
 
-async function fonteRF() {
-  const html = await fetchHTML("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje");
-  if (!html) return [];
+    const lista = [];
 
-  const $ = cheerio.load(html);
-  const lista = [];
+    $("table,div").each((i, el) => {
+      const nums = $(el).text().match(/\b\d{4}\b/g);
 
-  $("table").each((i, t) => {
-    const nums = $(t).text().match(/\b\d{4}\b/g);
+      if (nums && nums.length >= 5) {
+        lista.push({
+          horario: "DNP-" + i,
+          p1: nums[0], p2: nums[1], p3: nums[2], p4: nums[3], p5: nums[4],
+          fonte: "deunoposte"
+        });
+      }
+    });
 
-    if (nums?.length >= 5) {
-      lista.push({
-        banca: "rio",
-        horario: "RF-" + i,
-        p1: nums[0], p2: nums[1], p3: nums[2], p4: nums[3], p5: nums[4]
-      });
-    }
-  });
-
-  return lista;
-}
-
-async function fonteDNP() {
-  const html = await fetchHTML("https://www.deunoposte.com/resultado-do-jogo-do-bicho-rj");
-  if (!html) return [];
-
-  const $ = cheerio.load(html);
-  const lista = [];
-
-  $("body").find("table,div").each((i, el) => {
-    const nums = $(el).text().match(/\b\d{4}\b/g);
-
-    if (nums?.length >= 5) {
-      lista.push({
-        banca: "rio",
-        horario: "DNP-" + i,
-        p1: nums[0], p2: nums[1], p3: nums[2], p4: nums[3], p5: nums[4]
-      });
-    }
-  });
-
-  return lista;
+    return lista;
+  } catch {
+    return [];
+  }
 }
 
 //////////////////////////////////////////////////
 // 🧠 SCORE ENTERPRISE
 //////////////////////////////////////////////////
 
-function score(lista) {
+function score(r) {
   let s = 0;
 
-  for (const r of lista) {
-    if (!resultadoValido(r)) continue;
+  if (resultadoValido(r)) s += 5;
 
-    s += 5;
+  const set = new Set([r.p1, r.p2, r.p3, r.p4, r.p5]);
+  if (set.size >= 4) s += 2;
 
-    const set = new Set([r.p1, r.p2, r.p3, r.p4, r.p5]);
-    if (set.size >= 4) s += 2;
-
-    if (r.horario && !r.horario.includes("Alt")) s += 1;
-  }
+  if (r.fonte === "resultadofacil") s += 2;
+  if (r.fonte === "deunoposte") s += 1;
 
   return s;
 }
 
 //////////////////////////////////////////////////
-// 🏆 SELETOR INTELIGENTE
+// 🏆 AGREGADOR MULTI-FONTE
 //////////////////////////////////////////////////
 
-async function escolherFonte() {
-
+async function coletarMelhorFonte() {
   const fontes = [
-    { fn: fonteRF, nome: "RF" },
-    { fn: fonteDNP, nome: "DNP" }
+    await fonteResultadoFacil(),
+    await fonteDeuNoPoste()
   ];
 
-  let melhor = null;
+  const todos = fontes.flat().filter(resultadoValido);
 
-  for (const f of fontes) {
+  // ranking
+  todos.sort((a, b) => score(b) - score(a));
 
-    const dados = await f.fn();
-    const validos = dados.filter(resultadoValido);
-    const s = score(validos);
-
-    console.log(`📊 ${f.nome} score:`, s);
-
-    if (!melhor || s > melhor.score) {
-      melhor = { dados: validos, score: s, nome: f.nome };
-    }
-  }
-
-  if (!melhor) return [];
-
-  console.log("🏆 fonte escolhida:", melhor.nome);
-
-  return melhor.dados;
+  return todos;
 }
 
 //////////////////////////////////////////////////
-// 💾 STORAGE ENTERPRISE (sem duplicar + sem corrupção)
-//////////////////////////////////////////////////
-
-async function salvar(lista) {
-
-  const hoje = new Date().toISOString().split("T")[0];
-
-  const ops = lista
-    .filter(resultadoValido)
-    .map(r => ({
-      updateOne: {
-        filter: {
-          uniqueId: `${hoje}-${r.banca}-${r.p1}-${r.p2}-${r.p3}-${r.p4}-${r.p5}`
-        },
-        update: {
-          ...r,
-          data: hoje,
-          banca: r.banca
-        },
-        upsert: true
-      }
-    }));
-
-  if (ops.length) {
-    await Resultado.bulkWrite(ops, { ordered: false });
-  }
-}
-
-//////////////////////////////////////////////////
-// 🧹 LIMPEZA AUTOMÁTICA (enterprise)
+// 🧹 LIMPEZA DE LIXO AUTOMÁTICA
 //////////////////////////////////////////////////
 
 async function limparLixo() {
-
-  await Resultado.deleteMany({
+  const lixo = await Resultado.deleteMany({
     $or: [
-      { p1: "9999" },
-      { p2: "9999" },
+      { p1: "2026" },
+      { p2: "2026" },
       { p3: "2026" },
-      { horario: "Extração" }
+      { p4: "2026" },
+      { p5: "2026" }
     ]
   });
 
+  if (lixo.deletedCount > 0) {
+    console.log("🧹 lixo removido:", lixo.deletedCount);
+  }
 }
 
 //////////////////////////////////////////////////
-// 📊 HISTÓRICO CONSISTENTE
+// 💾 SALVAR ENTERPRISE
+//////////////////////////////////////////////////
+
+async function salvar(lista) {
+  const hoje = new Date().toISOString().split("T")[0];
+
+  const ops = lista.map(r => {
+    const hash = gerarHash(r);
+
+    return {
+      updateOne: {
+        filter: { hash },
+        update: {
+          ...r,
+          hash,
+          data: hoje,
+          banca: "mix"
+        },
+        upsert: true
+      }
+    };
+  });
+
+  if (ops.length) {
+    await Resultado.bulkWrite(ops);
+  }
+}
+
+//////////////////////////////////////////////////
+// 📊 HISTÓRICO ORGANIZADO
 //////////////////////////////////////////////////
 
 async function historico() {
-
   const dados = await Resultado.find().lean();
+
   const h = {};
 
   for (const r of dados) {
-
     if (!resultadoValido(r)) continue;
 
     if (!h[r.data]) {
-      h[r.data] = {
-        rio: [],
-        look: [],
-        nacional: [],
-        federal: []
-      };
+      h[r.data] = { rio: [], look: [], nacional: [], federal: [] };
     }
 
-    if (h[r.data][r.banca]) {
-      h[r.data][r.banca].push(r);
-    }
+    const banca = h[r.data][r.banca || "rio"];
+    if (banca) banca.push(r);
   }
 
   return h;
 }
 
 //////////////////////////////////////////////////
-// ⚡ CACHE ENTERPRISE
+// 🚀 CACHE ENTERPRISE
 //////////////////////////////////////////////////
 
 let cache = null;
-let last = 0;
+let tempo = 0;
 
 async function carregar() {
+  const agora = Date.now();
 
-  const now = Date.now();
-
-  if (cache && now - last < 60000) {
+  if (cache && agora - tempo < 60000) {
     return cache;
   }
 
-  const dados = await escolherFonte();
+  const dados = await coletarMelhorFonte();
 
-  if (dados.length) {
-    await salvar(dados);
-  }
+  await salvar(dados);
 
   await limparLixo();
 
+  const hist = await historico();
+
   cache = {
     atualizado: new Date().toLocaleString(),
-    historico: await historico()
+    historico: hist
   };
 
-  last = now;
+  tempo = agora;
 
   return cache;
 }
@@ -305,17 +286,10 @@ app.get("/resultados", async (req, res) => {
   try {
     res.json(await carregar());
   } catch (e) {
-    res.status(500).json({
-      erro: "internal_error",
-      detalhe: e.message
-    });
+    res.status(500).json({ erro: e.message });
   }
 });
 
-//////////////////////////////////////////////////
-// 🚀 START
-//////////////////////////////////////////////////
-
 app.listen(PORT, () => {
-  console.log("🚀 API enterprise rodando na porta", PORT);
+  console.log("🚀 API ENTERPRISE rodando na porta", PORT);
 });
