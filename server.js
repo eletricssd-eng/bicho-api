@@ -53,7 +53,7 @@ const ResultadoSchema = new mongoose.Schema({
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
-// 🧠 VALIDAÇÃO (NOVO)
+// 🧠 VALIDAÇÃO
 //////////////////////////////////////////////////
 
 function resultadoValido(item){
@@ -64,21 +64,21 @@ function resultadoValido(item){
   if(nums.some(n => !n)) return false;
   if(nums.some(n => !/^\d{4}$/.test(n))) return false;
 
-  // bloqueia repetição tipo 9999
-  const repetidos = nums.filter(n => n === nums[0]).length;
-  if(repetidos >= 3) return false;
+  // bloqueia lixo óbvio
+  if(nums.every(n => n === nums[0])) return false;
 
-  // bloqueia ano tipo 2026
-  if(nums.some(n => n.startsWith("20"))) return false;
+  // evita ano tipo 2026 em massa
+  const anoCount = nums.filter(n => n.startsWith("20")).length;
+  if(anoCount >= 3) return false;
 
   return true;
 }
 
 function limparHorario(texto){
-  if(!texto) return "Extração";
+  if(!texto) return "extra";
 
   const match = texto.match(/\d{2}:\d{2}|\d{2}h/);
-  return match ? match[0] : "Extração";
+  return match ? match[0].replace("h", ":00") : "extra";
 }
 
 //////////////////////////////////////////////////
@@ -93,18 +93,18 @@ async function scraper(url){
     });
 
     const $ = cheerio.load(data);
-    const lista = [];
+    let lista = [];
 
     $("table").each((i, tabela)=>{
 
       let titulo = $(tabela).prevAll("h2,h3,strong").first().text().trim();
-      if(!titulo) titulo = "Horário " + (i+1);
+      if(!titulo) titulo = "extra";
 
       const nums = [];
 
       $(tabela).find("tr").each((i,tr)=>{
         const match = $(tr).text().match(/\d{4}/g);
-        if(match) match.forEach(n => nums.push(n));
+        if(match) nums.push(...match);
       });
 
       if(nums.length >= 5){
@@ -121,21 +121,18 @@ async function scraper(url){
         if(resultadoValido(item)){
           lista.push(item);
         }
-
       }
-
     });
 
-    // fallback controlado (agora validando)
+    // fallback mais restrito
     if(lista.length === 0){
 
-      const texto = $("body").text();
-      const numeros = texto.match(/\d{4}/g);
+      const numeros = $("body").text().match(/\d{4}/g);
 
-      if(numeros && numeros.length >= 5){
+      if(numeros && numeros.length >= 10){
 
         const item = {
-          horario: "Extração",
+          horario: "extra",
           p1: numeros[0],
           p2: numeros[1],
           p3: numeros[2],
@@ -146,12 +143,16 @@ async function scraper(url){
         if(resultadoValido(item)){
           lista.push(item);
         }
-
       }
-
     }
 
-    return lista;
+    // remove duplicados
+    const mapa = new Map();
+    lista.forEach(i => {
+      mapa.set(i.horario + i.p1, i);
+    });
+
+    return Array.from(mapa.values());
 
   }catch(e){
     console.log("❌ erro scraper:", url);
@@ -166,10 +167,12 @@ async function scraper(url){
 async function tentarFontes(fontes){
   for(const url of fontes){
     const dados = await scraper(url);
-    if(dados.length){
+
+    if(dados.length >= 1){
       console.log("✅ fonte OK:", url);
       return dados;
     }
+
     console.log("⚠️ falhou:", url);
   }
   return [];
@@ -196,7 +199,7 @@ const FONTES = {
 };
 
 //////////////////////////////////////////////////
-// 🏦 FEDERAL (CORRIGIDO)
+// 🏦 FEDERAL (FIX)
 //////////////////////////////////////////////////
 
 async function pegarFederal(){
@@ -206,12 +209,12 @@ async function pegarFederal(){
       { timeout: 10000 }
     );
 
-    if(!data || !data.listaResultado) return [];
+    if(!data?.listaResultado?.length) return [];
 
     const r = data.listaResultado[0];
 
     const item = {
-      horario: "Federal",
+      horario: "federal",
       p1: r.premio1,
       p2: r.premio2,
       p3: r.premio3,
@@ -222,7 +225,7 @@ async function pegarFederal(){
     return resultadoValido(item) ? [item] : [];
 
   }catch(e){
-    console.log("❌ federal falhou — ignorando fallback");
+    console.log("❌ federal falhou (sem fallback)");
     return [];
   }
 }
@@ -257,10 +260,12 @@ async function salvarMongo(dados){
   const hoje = new Date().toISOString().split("T")[0];
 
   for(const banca in dados){
+
     for(const item of dados[banca]){
 
       try{
-        const uniqueId = `${hoje}-${banca}-${item.horario}`;
+
+        const uniqueId = `${hoje}-${banca}-${item.horario}-${item.p1}`;
 
         await Resultado.findOneAndUpdate(
           { uniqueId },
@@ -271,7 +276,6 @@ async function salvarMongo(dados){
       }catch(e){
         console.log("❌ erro salvar:", e.message);
       }
-
     }
   }
 }
