@@ -22,17 +22,21 @@ const Resultado = mongoose.model("Resultado", new mongoose.Schema({
   data: String,
   banca: String,
   horario: String,
-  p1: String, p2: String, p3: String, p4: String, p5: String
+  p1: String,
+  p2: String,
+  p3: String,
+  p4: String,
+  p5: String
 }));
 
 //////////////////////////////////////////////////
-// 🧠 VALIDAÇÃO
+// 🧠 VALIDAÇÃO FORTE
 //////////////////////////////////////////////////
 
 function resultadoValido(r) {
   if (!r) return false;
 
-  const nums = [r.p1,r.p2,r.p3,r.p4,r.p5];
+  const nums = [r.p1, r.p2, r.p3, r.p4, r.p5];
 
   if (nums.some(n => !/^\d{4}$/.test(n))) return false;
   if (nums.some(n => /^(\d)\1{3}$/.test(n))) return false;
@@ -46,10 +50,10 @@ function resultadoValido(r) {
 // 🔁 FETCH
 //////////////////////////////////////////////////
 
-async function fetchHTML(url){
-  const { data } = await axios.get(url,{
-    headers:{ "User-Agent":"Mozilla/5.0" },
-    timeout:15000
+async function fetchHTML(url) {
+  const { data } = await axios.get(url, {
+    headers: { "User-Agent": "Mozilla/5.0" },
+    timeout: 15000
   });
   return data;
 }
@@ -58,70 +62,83 @@ async function fetchHTML(url){
 // 🔍 FONTES
 //////////////////////////////////////////////////
 
-async function fonteResultadoFacil(){
-  try{
+async function fonteResultadoFacil() {
+  try {
     const html = await fetchHTML("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje");
     const $ = cheerio.load(html);
 
     const lista = [];
 
-    $("table").each((i,t)=>{
+    $("table").each((i, t) => {
       const nums = $(t).text().match(/\b\d{4}\b/g);
-      if(nums && nums.length>=5){
+
+      if (nums && nums.length >= 5) {
         lista.push({
-          horario:"RF "+i,
-          p1:nums[0],p2:nums[1],p3:nums[2],p4:nums[3],p5:nums[4]
+          horario: "RF " + i,
+          banca: "rio",
+          p1: nums[0],
+          p2: nums[1],
+          p3: nums[2],
+          p4: nums[3],
+          p5: nums[4]
         });
       }
     });
 
     return lista;
 
-  }catch{ return []; }
+  } catch {
+    return [];
+  }
 }
 
-async function fonteDeuNoPoste(){
-  try{
+async function fonteDeuNoPoste() {
+  try {
     const html = await fetchHTML("https://www.deunoposte.com/resultado-do-jogo-do-bicho-rj");
     const $ = cheerio.load(html);
 
     const lista = [];
 
-    $("body").find("table,div").each((i,el)=>{
+    $("body").find("table,div").each((i, el) => {
       const nums = $(el).text().match(/\b\d{4}\b/g);
-      if(nums && nums.length>=5){
+
+      if (nums && nums.length >= 5) {
         lista.push({
-          horario:"DNP "+i,
-          p1:nums[0],p2:nums[1],p3:nums[2],p4:nums[3],p5:nums[4]
+          horario: "DNP " + i,
+          banca: "rio",
+          p1: nums[0],
+          p2: nums[1],
+          p3: nums[2],
+          p4: nums[3],
+          p5: nums[4]
         });
       }
     });
 
     return lista;
 
-  }catch{ return []; }
+  } catch {
+    return [];
+  }
 }
 
 //////////////////////////////////////////////////
-// 🧠 SCORE INTELIGENTE
+// 🧠 SCORE
 //////////////////////////////////////////////////
 
-function calcularScore(lista){
-
-  if(!lista.length) return 0;
+function calcularScore(lista) {
+  if (!lista.length) return 0;
 
   let score = 0;
 
-  lista.forEach(r=>{
-    if(resultadoValido(r)) score += 5;
+  for (const r of lista) {
+    if (resultadoValido(r)) score += 5;
 
-    // diversidade de números
-    const set = new Set([r.p1,r.p2,r.p3,r.p4,r.p5]);
-    if(set.size >= 4) score += 2;
+    const set = new Set([r.p1, r.p2, r.p3, r.p4, r.p5]);
+    if (set.size >= 4) score += 2;
 
-    // horário real
-    if(!r.horario.includes("Alt")) score += 1;
-  });
+    if (r.horario && !r.horario.includes("Alt")) score += 1;
+  }
 
   return score;
 }
@@ -130,16 +147,17 @@ function calcularScore(lista){
 // 🏆 ESCOLHER MELHOR FONTE
 //////////////////////////////////////////////////
 
-async function escolherMelhorFonte(){
+async function escolherMelhorFonte() {
 
   const fontes = [
-    { nome:"RF", fn:fonteResultadoFacil },
-    { nome:"DNP", fn:fonteDeuNoPoste }
+    { nome: "RF", fn: fonteResultadoFacil },
+    { nome: "DNP", fn: fonteDeuNoPoste }
   ];
 
   const resultados = [];
 
-  for(const f of fontes){
+  for (const f of fontes) {
+
     const dados = await f.fn();
     const validos = dados.filter(resultadoValido);
     const score = calcularScore(validos);
@@ -153,10 +171,14 @@ async function escolherMelhorFonte(){
     console.log(`📊 ${f.nome}: score ${score}`);
   }
 
-  // ordena por melhor score
-  resultados.sort((a,b)=>b.score-a.score);
+  resultados.sort((a, b) => b.score - a.score);
 
   const melhor = resultados[0];
+
+  if (!melhor || !melhor.dados.length) {
+    console.log("⚠️ nenhuma fonte válida");
+    return [];
+  }
 
   console.log("🏆 fonte escolhida:", melhor.nome);
 
@@ -164,41 +186,58 @@ async function escolherMelhorFonte(){
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR
+// 💾 SALVAR (CORRIGIDO)
 //////////////////////////////////////////////////
 
-async function salvar(lista){
+async function salvar(lista) {
 
   const hoje = new Date().toISOString().split("T")[0];
 
-  const ops = lista.map(r=>({
-    updateOne:{
-      filter:{ uniqueId:`${hoje}-${r.p1}-${r.p2}-${r.p3}` },
-      update:{ ...r, data:hoje, banca:"rio" },
-      upsert:true
-    }
-  }));
+  const ops = lista
+    .filter(resultadoValido)
+    .map(r => ({
+      updateOne: {
+        filter: {
+          uniqueId: `${hoje}-${r.banca}-${r.p1}-${r.p2}-${r.p3}`
+        },
+        update: {
+          ...r,
+          data: hoje
+        },
+        upsert: true
+      }
+    }));
 
-  if(ops.length) await Resultado.bulkWrite(ops);
+  if (ops.length) await Resultado.bulkWrite(ops);
 }
 
 //////////////////////////////////////////////////
-// 📊 HISTÓRICO
+// 📊 HISTÓRICO (CORRIGIDO - NÃO MISTURA BANCA)
 //////////////////////////////////////////////////
 
-async function historico(){
+async function historico() {
+
   const dados = await Resultado.find().lean();
   const h = {};
 
-  dados.forEach(r=>{
-    if(!resultadoValido(r)) return;
+  for (const r of dados) {
 
-    if(!h[r.data]){
-      h[r.data]={ rio:[] };
+    if (!resultadoValido(r)) continue;
+
+    if (!h[r.data]) {
+      h[r.data] = {
+        rio: [],
+        look: [],
+        nacional: [],
+        federal: []
+      };
     }
 
-    h[r.data].rio.push(r);
-  });
+    // 🔥 FIX PRINCIPAL: respeita banca real
+    if (h[r.data][r.banca]) {
+      h[r.data][r.banca].push(r);
+    }
+  }
 
   return h;
 }
@@ -207,21 +246,19 @@ async function historico(){
 // 🚀 CACHE
 //////////////////////////////////////////////////
 
-let cache=null;
-let tempo=0;
+let cache = null;
+let tempo = 0;
 
-async function carregar(){
+async function carregar() {
 
   const agora = Date.now();
 
-  if(cache && (agora-tempo<60000)) return cache;
+  if (cache && (agora - tempo < 60000)) return cache;
 
   const melhor = await escolherMelhorFonte();
 
-  if(melhor.length){
+  if (melhor.length) {
     await salvar(melhor);
-  }else{
-    console.log("⚠️ nenhuma fonte válida");
   }
 
   const h = await historico();
@@ -240,12 +277,16 @@ async function carregar(){
 // 🌐 ROTAS
 //////////////////////////////////////////////////
 
-app.get("/resultados", async(req,res)=>{
-  try{
+app.get("/resultados", async (req, res) => {
+  try {
     res.json(await carregar());
-  }catch(e){
-    res.status(500).json({erro:e.message});
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
   }
 });
 
-app.listen(PORT, ()=>console.log("🚀 rodando",PORT));
+//////////////////////////////////////////////////
+// 🚀 START
+//////////////////////////////////////////////////
+
+app.listen(PORT, () => console.log("🚀 rodando", PORT));
