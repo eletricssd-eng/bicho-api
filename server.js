@@ -11,26 +11,30 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 //////////////////////////////////////////////////
-// 🔥 MONGO
+// 🔥 MONGO (robusto)
 //////////////////////////////////////////////////
 
-await mongoose.connect(process.env.MONGO_URL);
+await mongoose.connect(process.env.MONGO_URL, {
+  serverSelectionTimeoutMS: 5000,
+  maxPoolSize: 10
+});
+
 console.log("✅ Mongo conectado");
 
 const Resultado = mongoose.model("Resultado", new mongoose.Schema({
-  uniqueId: { type: String, unique: true },
+  uniqueId: { type: String, unique: true, index: true },
   data: String,
-  banca: String,
+  banca: { type: String, index: true },
   horario: String,
   p1: String,
   p2: String,
   p3: String,
   p4: String,
   p5: String
-}));
+}, { timestamps: true }));
 
 //////////////////////////////////////////////////
-// 🧠 VALIDAÇÃO FORTE
+// 🧠 VALIDADOR ENTERPRISE
 //////////////////////////////////////////////////
 
 function resultadoValido(r) {
@@ -38,147 +42,146 @@ function resultadoValido(r) {
 
   const nums = [r.p1, r.p2, r.p3, r.p4, r.p5];
 
+  // formato 4 dígitos
   if (nums.some(n => !/^\d{4}$/.test(n))) return false;
-  if (nums.some(n => /^(\d)\1{3}$/.test(n))) return false;
+
+  // bloqueia padrões fake
+  const invalidos = new Set([
+    "0000","1111","2222","3333","4444",
+    "5555","6666","7777","8888","9999"
+  ]);
+
+  if (nums.some(n => invalidos.has(n))) return false;
+
+  // bloqueia ano fake
   if (nums.some(n => n.startsWith("20"))) return false;
+
+  // horário lixo
   if (!r.horario || r.horario.toLowerCase().includes("extra")) return false;
+
+  // banca obrigatória
+  if (!r.banca) return false;
 
   return true;
 }
 
 //////////////////////////////////////////////////
-// 🔁 FETCH
+// 🔁 FETCH SAFE
 //////////////////////////////////////////////////
 
 async function fetchHTML(url) {
-  const { data } = await axios.get(url, {
-    headers: { "User-Agent": "Mozilla/5.0" },
-    timeout: 15000
+  try {
+    const { data } = await axios.get(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "text/html"
+      },
+      timeout: 15000
+    });
+
+    return data;
+
+  } catch {
+    return null;
+  }
+}
+
+//////////////////////////////////////////////////
+// 🔍 SCRAPERS (com banca correta)
+//////////////////////////////////////////////////
+
+async function fonteRF() {
+  const html = await fetchHTML("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje");
+  if (!html) return [];
+
+  const $ = cheerio.load(html);
+  const lista = [];
+
+  $("table").each((i, t) => {
+    const nums = $(t).text().match(/\b\d{4}\b/g);
+
+    if (nums?.length >= 5) {
+      lista.push({
+        banca: "rio",
+        horario: "RF-" + i,
+        p1: nums[0], p2: nums[1], p3: nums[2], p4: nums[3], p5: nums[4]
+      });
+    }
   });
-  return data;
+
+  return lista;
+}
+
+async function fonteDNP() {
+  const html = await fetchHTML("https://www.deunoposte.com/resultado-do-jogo-do-bicho-rj");
+  if (!html) return [];
+
+  const $ = cheerio.load(html);
+  const lista = [];
+
+  $("body").find("table,div").each((i, el) => {
+    const nums = $(el).text().match(/\b\d{4}\b/g);
+
+    if (nums?.length >= 5) {
+      lista.push({
+        banca: "rio",
+        horario: "DNP-" + i,
+        p1: nums[0], p2: nums[1], p3: nums[2], p4: nums[3], p5: nums[4]
+      });
+    }
+  });
+
+  return lista;
 }
 
 //////////////////////////////////////////////////
-// 🔍 FONTES
+// 🧠 SCORE ENTERPRISE
 //////////////////////////////////////////////////
 
-async function fonteResultadoFacil() {
-  try {
-    const html = await fetchHTML("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje");
-    const $ = cheerio.load(html);
-
-    const lista = [];
-
-    $("table").each((i, t) => {
-      const nums = $(t).text().match(/\b\d{4}\b/g);
-
-      if (nums && nums.length >= 5) {
-        lista.push({
-          horario: "RF " + i,
-          banca: "rio",
-          p1: nums[0],
-          p2: nums[1],
-          p3: nums[2],
-          p4: nums[3],
-          p5: nums[4]
-        });
-      }
-    });
-
-    return lista;
-
-  } catch {
-    return [];
-  }
-}
-
-async function fonteDeuNoPoste() {
-  try {
-    const html = await fetchHTML("https://www.deunoposte.com/resultado-do-jogo-do-bicho-rj");
-    const $ = cheerio.load(html);
-
-    const lista = [];
-
-    $("body").find("table,div").each((i, el) => {
-      const nums = $(el).text().match(/\b\d{4}\b/g);
-
-      if (nums && nums.length >= 5) {
-        lista.push({
-          horario: "DNP " + i,
-          banca: "rio",
-          p1: nums[0],
-          p2: nums[1],
-          p3: nums[2],
-          p4: nums[3],
-          p5: nums[4]
-        });
-      }
-    });
-
-    return lista;
-
-  } catch {
-    return [];
-  }
-}
-
-//////////////////////////////////////////////////
-// 🧠 SCORE
-//////////////////////////////////////////////////
-
-function calcularScore(lista) {
-  if (!lista.length) return 0;
-
-  let score = 0;
+function score(lista) {
+  let s = 0;
 
   for (const r of lista) {
-    if (resultadoValido(r)) score += 5;
+    if (!resultadoValido(r)) continue;
+
+    s += 5;
 
     const set = new Set([r.p1, r.p2, r.p3, r.p4, r.p5]);
-    if (set.size >= 4) score += 2;
+    if (set.size >= 4) s += 2;
 
-    if (r.horario && !r.horario.includes("Alt")) score += 1;
+    if (r.horario && !r.horario.includes("Alt")) s += 1;
   }
 
-  return score;
+  return s;
 }
 
 //////////////////////////////////////////////////
-// 🏆 ESCOLHER MELHOR FONTE
+// 🏆 SELETOR INTELIGENTE
 //////////////////////////////////////////////////
 
-async function escolherMelhorFonte() {
+async function escolherFonte() {
 
   const fontes = [
-    { nome: "RF", fn: fonteResultadoFacil },
-    { nome: "DNP", fn: fonteDeuNoPoste }
+    { fn: fonteRF, nome: "RF" },
+    { fn: fonteDNP, nome: "DNP" }
   ];
 
-  const resultados = [];
+  let melhor = null;
 
   for (const f of fontes) {
 
     const dados = await f.fn();
     const validos = dados.filter(resultadoValido);
-    const score = calcularScore(validos);
+    const s = score(validos);
 
-    resultados.push({
-      nome: f.nome,
-      dados: validos,
-      score
-    });
+    console.log(`📊 ${f.nome} score:`, s);
 
-    console.log(`📊 ${f.nome}: score ${score}`);
+    if (!melhor || s > melhor.score) {
+      melhor = { dados: validos, score: s, nome: f.nome };
+    }
   }
 
-  resultados.sort((a, b) => b.score - a.score);
-
-  const melhor = resultados[0];
-
-  if (!melhor || !melhor.dados.length) {
-    console.log("⚠️ nenhuma fonte válida");
-    return [];
-  }
+  if (!melhor) return [];
 
   console.log("🏆 fonte escolhida:", melhor.nome);
 
@@ -186,7 +189,7 @@ async function escolherMelhorFonte() {
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR (CORRIGIDO)
+// 💾 STORAGE ENTERPRISE (sem duplicar + sem corrupção)
 //////////////////////////////////////////////////
 
 async function salvar(lista) {
@@ -198,21 +201,41 @@ async function salvar(lista) {
     .map(r => ({
       updateOne: {
         filter: {
-          uniqueId: `${hoje}-${r.banca}-${r.p1}-${r.p2}-${r.p3}`
+          uniqueId: `${hoje}-${r.banca}-${r.p1}-${r.p2}-${r.p3}-${r.p4}-${r.p5}`
         },
         update: {
           ...r,
-          data: hoje
+          data: hoje,
+          banca: r.banca
         },
         upsert: true
       }
     }));
 
-  if (ops.length) await Resultado.bulkWrite(ops);
+  if (ops.length) {
+    await Resultado.bulkWrite(ops, { ordered: false });
+  }
 }
 
 //////////////////////////////////////////////////
-// 📊 HISTÓRICO (CORRIGIDO - NÃO MISTURA BANCA)
+// 🧹 LIMPEZA AUTOMÁTICA (enterprise)
+//////////////////////////////////////////////////
+
+async function limparLixo() {
+
+  await Resultado.deleteMany({
+    $or: [
+      { p1: "9999" },
+      { p2: "9999" },
+      { p3: "2026" },
+      { horario: "Extração" }
+    ]
+  });
+
+}
+
+//////////////////////////////////////////////////
+// 📊 HISTÓRICO CONSISTENTE
 //////////////////////////////////////////////////
 
 async function historico() {
@@ -233,7 +256,6 @@ async function historico() {
       };
     }
 
-    // 🔥 FIX PRINCIPAL: respeita banca real
     if (h[r.data][r.banca]) {
       h[r.data][r.banca].push(r);
     }
@@ -243,45 +265,50 @@ async function historico() {
 }
 
 //////////////////////////////////////////////////
-// 🚀 CACHE
+// ⚡ CACHE ENTERPRISE
 //////////////////////////////////////////////////
 
 let cache = null;
-let tempo = 0;
+let last = 0;
 
 async function carregar() {
 
-  const agora = Date.now();
+  const now = Date.now();
 
-  if (cache && (agora - tempo < 60000)) return cache;
-
-  const melhor = await escolherMelhorFonte();
-
-  if (melhor.length) {
-    await salvar(melhor);
+  if (cache && now - last < 60000) {
+    return cache;
   }
 
-  const h = await historico();
+  const dados = await escolherFonte();
+
+  if (dados.length) {
+    await salvar(dados);
+  }
+
+  await limparLixo();
 
   cache = {
     atualizado: new Date().toLocaleString(),
-    historico: h
+    historico: await historico()
   };
 
-  tempo = agora;
+  last = now;
 
   return cache;
 }
 
 //////////////////////////////////////////////////
-// 🌐 ROTAS
+// 🌐 API
 //////////////////////////////////////////////////
 
 app.get("/resultados", async (req, res) => {
   try {
     res.json(await carregar());
   } catch (e) {
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({
+      erro: "internal_error",
+      detalhe: e.message
+    });
   }
 });
 
@@ -289,4 +316,6 @@ app.get("/resultados", async (req, res) => {
 // 🚀 START
 //////////////////////////////////////////////////
 
-app.listen(PORT, () => console.log("🚀 rodando", PORT));
+app.listen(PORT, () => {
+  console.log("🚀 API enterprise rodando na porta", PORT);
+});
