@@ -28,6 +28,8 @@ async function conectarMongo() {
   }
 }
 conectarMongo();
+// roda a cada 5 minutos
+setInterval(limparLixo, 5 * 60 * 1000);
 
 //////////////////////////////////////////////////
 // 📦 MODEL
@@ -46,6 +48,41 @@ const ResultadoSchema = new mongoose.Schema({
 });
 
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
+
+//////////////////////////////////////////////////
+// 🧹 LIMPEZA AUTOMÁTICA (ANTI LIXO)
+//////////////////////////////////////////////////
+
+async function limparLixo() {
+
+  if (mongoose.connection.readyState !== 1) {
+    console.log("⚠️ limpeza ignorada (mongo offline)");
+    return;
+  }
+
+  try {
+
+    const lixo = await Resultado.deleteMany({
+      $or: [
+        { horario: { $regex: /extra/i } },
+
+        // números inválidos
+        { p1: { $in: ["0000","1111","2222","3333","4444","5555","6666","7777","8888","9999","2026"] } },
+        { p2: { $in: ["0000","1111","2222","3333","4444","5555","6666","7777","8888","9999","2026"] } },
+        { p3: { $in: ["0000","1111","2222","3333","4444","5555","6666","7777","8888","9999","2026"] } },
+        { p4: { $in: ["0000","1111","2222","3333","4444","5555","6666","7777","8888","9999","2026"] } },
+        { p5: { $in: ["0000","1111","2222","3333","4444","5555","6666","7777","8888","9999","2026"] } }
+      ]
+    });
+
+    if (lixo.deletedCount > 0) {
+      console.log("🧹 lixo removido:", lixo.deletedCount);
+    }
+
+  } catch (e) {
+    console.log("❌ erro limpeza:", e.message);
+  }
+}
 
 //////////////////////////////////////////////////
 // 🧠 VALIDAÇÃO FORTE (ANTI LIXO)
