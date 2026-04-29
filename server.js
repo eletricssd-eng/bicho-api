@@ -28,8 +28,6 @@ async function conectarMongo() {
   }
 }
 conectarMongo();
-// roda a cada 5 minutos
-setInterval(limparLixo, 5 * 60 * 1000);
 
 //////////////////////////////////////////////////
 // 📦 MODEL
@@ -50,28 +48,68 @@ const ResultadoSchema = new mongoose.Schema({
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
-// 🧹 LIMPEZA AUTOMÁTICA (ANTI LIXO)
+// 🧠 VALIDAÇÃO BLINDADA
+//////////////////////////////////////////////////
+
+function resultadoValido(r) {
+  if (!r) return false;
+
+  const lista = [r.p1, r.p2, r.p3, r.p4, r.p5];
+
+  if (lista.some(n => !n)) return false;
+  if (lista.some(n => !/^\d{4}$/.test(n))) return false;
+
+  // repetidos tipo 1111
+  if (lista.some(n => /^(\d)\1{3}$/.test(n))) return false;
+
+  // anos tipo 2026
+  if (lista.some(n => n.startsWith("20"))) return false;
+
+  // muitos números ruins
+  const ruins = lista.filter(n =>
+    /^(\d)\1{3}$/.test(n) || n.startsWith("20")
+  );
+  if (ruins.length >= 2) return false;
+
+  // horario fake
+  if (!r.horario || r.horario.toLowerCase().includes("extra")) return false;
+
+  return true;
+}
+
+//////////////////////////////////////////////////
+// 🧹 LIMPEZA AUTOMÁTICA FORTE
 //////////////////////////////////////////////////
 
 async function limparLixo() {
 
-  if (mongoose.connection.readyState !== 1) {
-    console.log("⚠️ limpeza ignorada (mongo offline)");
-    return;
-  }
+  if (mongoose.connection.readyState !== 1) return;
 
   try {
 
     const lixo = await Resultado.deleteMany({
       $or: [
+
         { horario: { $regex: /extra/i } },
 
-        // números inválidos
-        { p1: { $in: ["0000","1111","2222","3333","4444","5555","6666","7777","8888","9999","2026"] } },
-        { p2: { $in: ["0000","1111","2222","3333","4444","5555","6666","7777","8888","9999","2026"] } },
-        { p3: { $in: ["0000","1111","2222","3333","4444","5555","6666","7777","8888","9999","2026"] } },
-        { p4: { $in: ["0000","1111","2222","3333","4444","5555","6666","7777","8888","9999","2026"] } },
-        { p5: { $in: ["0000","1111","2222","3333","4444","5555","6666","7777","8888","9999","2026"] } }
+        { p1: /^20/ }, { p2: /^20/ }, { p3: /^20/ },
+        { p4: /^20/ }, { p5: /^20/ },
+
+        { p1: /^(\d)\1{3}$/ },
+        { p2: /^(\d)\1{3}$/ },
+        { p3: /^(\d)\1{3}$/ },
+        { p4: /^(\d)\1{3}$/ },
+        { p5: /^(\d)\1{3}$/ },
+
+        {
+          $expr: {
+            $or: [
+              { $eq: ["$p1", "$p2"] },
+              { $eq: ["$p1", "$p3"] },
+              { $eq: ["$p1", "$p4"] }
+            ]
+          }
+        }
       ]
     });
 
@@ -84,35 +122,9 @@ async function limparLixo() {
   }
 }
 
-//////////////////////////////////////////////////
-// 🧠 VALIDAÇÃO FORTE (ANTI LIXO)
-//////////////////////////////////////////////////
-
-function resultadoValido(r) {
-  if (!r) return false;
-
-  const lista = [r.p1, r.p2, r.p3, r.p4, r.p5];
-
-  // precisa existir
-  if (lista.some(n => !n)) return false;
-
-  // precisa ser 4 dígitos
-  if (lista.some(n => !/^\d{4}$/.test(n))) return false;
-
-  // bloqueia repetição (1111, 9999)
-  if (lista.some(n => /^(\d)\1{3}$/.test(n))) return false;
-
-  // bloqueia anos (2026 etc)
-  if (lista.some(n => n.startsWith("20"))) return false;
-
-  // bloqueia todos iguais
-  if (new Set(lista).size === 1) return false;
-
-  // bloqueia fallback fake
-  if (!r.horario || r.horario.toLowerCase().includes("extra")) return false;
-
-  return true;
-}
+// roda sozinho
+setInterval(limparLixo, 5 * 60 * 1000);
+setTimeout(limparLixo, 10000);
 
 //////////////////////////////////////////////////
 // 🔁 AXIOS COM RETRY
@@ -123,13 +135,12 @@ async function fetchRetry(url, tentativas = 3) {
     return await axios.get(url, {
       headers: {
         "User-Agent": "Mozilla/5.0",
-        "Accept-Language": "pt-BR,pt;q=0.9"
+        "Accept-Language": "pt-BR"
       },
       timeout: 15000
     });
   } catch (e) {
     if (tentativas > 0) {
-      console.log("🔁 retry:", url);
       await new Promise(r => setTimeout(r, 2000));
       return fetchRetry(url, tentativas - 1);
     }
@@ -172,7 +183,7 @@ async function scraper(url) {
       }
     });
 
-    // fallback (NÃO confiável, só retorna)
+    // fallback (não confiável)
     if (lista.length === 0) {
       console.log("⚠️ fallback usado:", url);
 
@@ -212,12 +223,11 @@ async function pegarTudo() {
     scraper("https://www.resultadofacil.com.br/resultado-banca-federal")
   ]);
 
-  // data de hoje no formato BR
   const hojeBR = new Date().toLocaleDateString("pt-BR");
 
-  const federal = federalRaw.filter(r =>
-    resultadoValido(r) && r.horario.includes(hojeBR)
-  ).slice(0,1);
+  const federal = federalRaw
+    .filter(r => resultadoValido(r) && r.horario.includes(hojeBR))
+    .slice(0,1);
 
   return {
     rio: rio.filter(resultadoValido),
@@ -233,10 +243,7 @@ async function pegarTudo() {
 
 async function salvarMongo(dados) {
 
-  if (mongoose.connection.readyState !== 1) {
-    console.log("⚠️ Mongo offline");
-    return;
-  }
+  if (mongoose.connection.readyState !== 1) return;
 
   const hoje = new Date().toISOString().split("T")[0];
   const ops = [];
@@ -265,7 +272,7 @@ async function salvarMongo(dados) {
 }
 
 //////////////////////////////////////////////////
-// 📊 HISTÓRICO
+// 📊 HISTÓRICO (FILTRO FINAL)
 //////////////////////////////////////////////////
 
 async function pegarHistorico() {
@@ -274,6 +281,8 @@ async function pegarHistorico() {
   const historico = {};
 
   dados.forEach(r => {
+
+    if (!resultadoValido(r)) return;
 
     if (!historico[r.data]) {
       historico[r.data] = {
@@ -287,7 +296,6 @@ async function pegarHistorico() {
     historico[r.data][r.banca].push(r);
   });
 
-  // ordenar horários
   for (const data in historico) {
     for (const banca in historico[data]) {
       historico[data][banca].sort((a,b)=>
@@ -314,12 +322,10 @@ async function carregarTudo() {
     return cache;
   }
 
-  console.log("🔄 atualizando...");
-
   const dados = await pegarTudo();
 
   if (!dados.rio.length && cache) {
-    console.log("⚠️ usando cache (scraper falhou)");
+    console.log("⚠️ usando cache");
     return cache;
   }
 
@@ -350,7 +356,6 @@ app.get("/resultados", async (req, res) => {
     const dados = await carregarTudo();
     res.json(dados);
   } catch (e) {
-    console.log("❌ ERRO:", e.message);
     res.status(500).json({ erro: e.message });
   }
 });
