@@ -10,6 +10,31 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
+//////////////////////////////////////////////
+//  VALIDADOR DE RESULTADO
+/////////////////////////////////////////////
+
+function resultadoValido(item){
+
+  if(!item) return false;
+
+  const nums = [item.p1, item.p2, item.p3, item.p4, item.p5];
+
+  // precisa ter 5 números
+  if(nums.length < 5) return false;
+
+  // todos devem existir
+  if(nums.some(n => !n)) return false;
+
+  // não pode ser placeholder
+  if(nums.some(n => n === "0000" || n === "9999")) return false;
+
+  // evitar ano (2026, 2025...)
+  if(nums.some(n => n.startsWith("20"))) return false;
+
+  return true;
+}
+
 //////////////////////////////////////////////////
 // 🔥 MONGO (AUTO RECONNECT)
 //////////////////////////////////////////////////
@@ -81,7 +106,10 @@ async function scraper(url){
       const nums = [];
 
       $(tabela).find("tr").each((i,tr)=>{
-        const match = $(tr).text().match(/\d{4}/g);
+        const texto = $(tr).text().trim();
+
+// pega só números isolados (evita colar em texto)
+const match = texto.match(/\b\d{4}\b/g);
         if(match){
           match.forEach(n => nums.push(n));
         }
@@ -104,29 +132,25 @@ async function scraper(url){
     if(lista.length === 0){
 
       const texto = $("body").text();
-      const numeros = texto.match(/\d{4}/g);
+      const numeros = texto.match(/\b\d{4}\b/g);
 
-      if(numeros && numeros.length >= 5){
-        lista.push({
-          horario: "Extração",
-          p1: numeros[0],
-          p2: numeros[1],
-          p3: numeros[2],
-          p4: numeros[3],
-          p5: numeros[4]
-        });
-      }
+// 🔥 valida antes de usar
+if(numeros && numeros.length >= 5){
 
-    }
+  const possivel = {
+    horario: "Extração",
+    p1: numeros[0],
+    p2: numeros[1],
+    p3: numeros[2],
+    p4: numeros[3],
+    p5: numeros[4]
+  };
 
-    return lista;
-
-  }catch(e){
-    console.log("❌ erro scraper:", url);
-    return [];
+  if(resultadoValido(possivel)){
+    lista.push(possivel);
   }
-}
 
+}
 //////////////////////////////////////////////////
 // 🇧🇷 FEDERAL (ÚLTIMO)
 //////////////////////////////////////////////////
@@ -175,6 +199,18 @@ async function salvarMongo(dados){
 
       try{
 
+        // 🔥 VALIDAÇÃO AQUI
+        if(!resultadoValido(item)){
+          console.log("❌ resultado inválido ignorado:", banca, item);
+          continue;
+        }
+
+        // 🔥 evitar salvar federal repetida antiga
+        if(banca === "federal" && !item.horario.includes(hoje.split("-").reverse().join("/"))){
+          console.log("⚠️ federal antiga ignorada");
+          continue;
+        }
+
         const uniqueId = `${hoje}-${banca}-${item.horario}`;
 
         await Resultado.findOneAndUpdate(
@@ -191,39 +227,6 @@ async function salvarMongo(dados){
 
   }
 
-}
-
-//////////////////////////////////////////////////
-// 📊 HISTÓRICO
-//////////////////////////////////////////////////
-
-async function pegarHistorico(){
-
-  if(mongoose.connection.readyState !== 1){
-    console.log("⚠️ Mongo offline");
-    return {};
-  }
-
-  const dados = await Resultado.find().lean();
-
-  const historico = {};
-
-  dados.forEach(r=>{
-
-    if(!historico[r.data]){
-      historico[r.data] = {
-        rio: [],
-        look: [],
-        nacional: [],
-        federal: []
-      };
-    }
-
-    historico[r.data][r.banca].push(r);
-
-  });
-
-  return historico;
 }
 
 //////////////////////////////////////////////////
