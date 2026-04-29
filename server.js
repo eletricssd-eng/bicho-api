@@ -48,7 +48,7 @@ const ResultadoSchema = new mongoose.Schema({
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
-// 🧠 VALIDAÇÃO BLINDADA
+// 🧠 VALIDAÇÃO
 //////////////////////////////////////////////////
 
 function resultadoValido(r) {
@@ -59,84 +59,45 @@ function resultadoValido(r) {
   if (lista.some(n => !n)) return false;
   if (lista.some(n => !/^\d{4}$/.test(n))) return false;
 
-  // repetidos tipo 1111
   if (lista.some(n => /^(\d)\1{3}$/.test(n))) return false;
-
-  // anos tipo 2026
   if (lista.some(n => n.startsWith("20"))) return false;
 
-  // muitos números ruins
-  const ruins = lista.filter(n =>
-    /^(\d)\1{3}$/.test(n) || n.startsWith("20")
-  );
-  if (ruins.length >= 2) return false;
-
-  // horario fake
   if (!r.horario || r.horario.toLowerCase().includes("extra")) return false;
 
   return true;
 }
 
 //////////////////////////////////////////////////
-// 🧹 LIMPEZA AUTOMÁTICA FORTE
+// 🧹 LIMPEZA
 //////////////////////////////////////////////////
 
 async function limparLixo() {
-
   if (mongoose.connection.readyState !== 1) return;
 
-  try {
-
-    const lixo = await Resultado.deleteMany({
-      $or: [
-
-        { horario: { $regex: /extra/i } },
-
-        { p1: /^20/ }, { p2: /^20/ }, { p3: /^20/ },
-        { p4: /^20/ }, { p5: /^20/ },
-
-        { p1: /^(\d)\1{3}$/ },
-        { p2: /^(\d)\1{3}$/ },
-        { p3: /^(\d)\1{3}$/ },
-        { p4: /^(\d)\1{3}$/ },
-        { p5: /^(\d)\1{3}$/ },
-
-        {
-          $expr: {
-            $or: [
-              { $eq: ["$p1", "$p2"] },
-              { $eq: ["$p1", "$p3"] },
-              { $eq: ["$p1", "$p4"] }
-            ]
-          }
-        }
-      ]
-    });
-
-    if (lixo.deletedCount > 0) {
-      console.log("🧹 lixo removido:", lixo.deletedCount);
-    }
-
-  } catch (e) {
-    console.log("❌ erro limpeza:", e.message);
-  }
+  await Resultado.deleteMany({
+    $or: [
+      { horario: /extra/i },
+      { p1: /^20/ }, { p2: /^20/ }, { p3: /^20/ },
+      { p4: /^20/ }, { p5: /^20/ },
+      { p1: /^(\d)\1{3}$/ },
+      { p2: /^(\d)\1{3}$/ },
+      { p3: /^(\d)\1{3}$/ },
+      { p4: /^(\d)\1{3}$/ },
+      { p5: /^(\d)\1{3}$/ }
+    ]
+  });
 }
 
-// roda sozinho
 setInterval(limparLixo, 5 * 60 * 1000);
-setTimeout(limparLixo, 10000);
 
 //////////////////////////////////////////////////
-// 🔁 AXIOS COM RETRY
+// 🔁 FETCH RETRY
 //////////////////////////////////////////////////
 
 async function fetchRetry(url, tentativas = 3) {
   try {
     return await axios.get(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        "Accept-Language": "pt-BR"
-      },
+      headers: { "User-Agent": "Mozilla/5.0" },
       timeout: 15000
     });
   } catch (e) {
@@ -149,7 +110,7 @@ async function fetchRetry(url, tentativas = 3) {
 }
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER
+// 🔍 SCRAPER PRINCIPAL
 //////////////////////////////////////////////////
 
 async function scraper(url) {
@@ -183,57 +144,75 @@ async function scraper(url) {
       }
     });
 
-    // fallback (não confiável)
-    if (lista.length === 0) {
-      console.log("⚠️ fallback usado:", url);
-
-      const texto = $("body").text();
-      const numeros = texto.match(/\b\d{4}\b/g);
-
-      if (numeros && numeros.length >= 5) {
-        lista.push({
-          horario: "Extração",
-          p1: numeros[0],
-          p2: numeros[1],
-          p3: numeros[2],
-          p4: numeros[3],
-          p5: numeros[4]
-        });
-      }
-    }
-
     return lista;
 
   } catch (e) {
-    console.log("❌ erro scraper:", url, e.message);
+    console.log("❌ erro scraper principal:", e.message);
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🏦 BANCAS
+// 🔄 SCRAPER ALTERNATIVO (DEU NO POSTE)
+//////////////////////////////////////////////////
+
+async function scraperAlternativo() {
+  try {
+    const { data } = await fetchRetry(
+      "https://www.deunoposte.com/resultado-do-jogo-do-bicho-rj"
+    );
+
+    const $ = cheerio.load(data);
+    const lista = [];
+
+    $("body").find("table, div").each((i, el) => {
+      const nums = $(el).text().match(/\b\d{4}\b/g);
+
+      if (nums && nums.length >= 5) {
+        lista.push({
+          horario: "RJ Alt " + i,
+          p1: nums[0],
+          p2: nums[1],
+          p3: nums[2],
+          p4: nums[3],
+          p5: nums[4]
+        });
+      }
+    });
+
+    return lista;
+
+  } catch (e) {
+    console.log("❌ erro fonte alternativa:", e.message);
+    return [];
+  }
+}
+
+//////////////////////////////////////////////////
+// 🏦 BANCAS (MULTI-FONTE)
 //////////////////////////////////////////////////
 
 async function pegarTudo() {
 
-  const [rio, look, nacional, federalRaw] = await Promise.all([
-    scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
+  let rio = await scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje");
+
+  // fallback automático
+  if (!rio.length) {
+    console.log("⚠️ usando fonte alternativa RJ");
+    rio = await scraperAlternativo();
+  }
+
+  const [look, nacional, federal] = await Promise.all([
     scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
     scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje"),
     scraper("https://www.resultadofacil.com.br/resultado-banca-federal")
   ]);
 
-  const hojeBR = new Date().toLocaleDateString("pt-BR");
-
-  const federal = federalRaw
-    .filter(r => resultadoValido(r) && r.horario.includes(hojeBR))
-    .slice(0,1);
-
   return {
     rio: rio.filter(resultadoValido),
     look: look.filter(resultadoValido),
     nacional: nacional.filter(resultadoValido),
-    federal
+    federal: federal.filter(resultadoValido).slice(0,1)
   };
 }
 
@@ -265,14 +244,13 @@ async function salvarMongo(dados) {
     }
   }
 
-  if (ops.length > 0) {
+  if (ops.length) {
     await Resultado.bulkWrite(ops);
-    console.log("✅ salvo:", ops.length);
   }
 }
 
 //////////////////////////////////////////////////
-// 📊 HISTÓRICO (FILTRO FINAL)
+// 📊 HISTÓRICO
 //////////////////////////////////////////////////
 
 async function pegarHistorico() {
@@ -296,14 +274,6 @@ async function pegarHistorico() {
     historico[r.data][r.banca].push(r);
   });
 
-  for (const data in historico) {
-    for (const banca in historico[data]) {
-      historico[data][banca].sort((a,b)=>
-        a.horario.localeCompare(b.horario)
-      );
-    }
-  }
-
   return historico;
 }
 
@@ -324,12 +294,11 @@ async function carregarTudo() {
 
   const dados = await pegarTudo();
 
-  if (!dados.rio.length && cache) {
-    console.log("⚠️ usando cache");
-    return cache;
+  if (dados.rio.length || dados.look.length || dados.nacional.length) {
+    await salvarMongo(dados);
+  } else {
+    console.log("⚠️ sem dados novos, mantendo histórico");
   }
-
-  await salvarMongo(dados);
 
   const historico = await pegarHistorico();
 
