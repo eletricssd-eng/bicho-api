@@ -64,21 +64,30 @@ function resultadoValido(item){
   if(nums.some(n => !n)) return false;
   if(nums.some(n => !/^\d{4}$/.test(n))) return false;
 
-  // bloqueia lixo óbvio
   if(nums.every(n => n === nums[0])) return false;
 
-  // evita ano tipo 2026 em massa
   const anoCount = nums.filter(n => n.startsWith("20")).length;
   if(anoCount >= 3) return false;
 
   return true;
 }
 
+//////////////////////////////////////////////////
+// 🧠 NORMALIZA HORÁRIO (🔥 MELHORADO)
+//////////////////////////////////////////////////
+
 function limparHorario(texto){
   if(!texto) return "extra";
 
-  const match = texto.match(/\d{2}:\d{2}|\d{2}h/);
-  return match ? match[0].replace("h", ":00") : "extra";
+  const match = texto.match(/\d{1,2}:\d{2}|\d{1,2}h/);
+
+  if(!match) return "extra";
+
+  let h = match[0].replace("h", ":00");
+
+  const [hora, min] = h.split(":");
+
+  return `${hora.padStart(2,"0")}:${min}`;
 }
 
 //////////////////////////////////////////////////
@@ -124,7 +133,7 @@ async function scraper(url){
       }
     });
 
-    // fallback mais restrito
+    // fallback
     if(lista.length === 0){
 
       const numeros = $("body").text().match(/\d{4}/g);
@@ -146,10 +155,15 @@ async function scraper(url){
       }
     }
 
-    // remove duplicados
+    // 🔥 REMOVE DUPLICADOS MELHOR
     const mapa = new Map();
-    lista.forEach(i => {
-      mapa.set(i.horario + i.p1, i);
+
+    lista.forEach(i=>{
+      const chave = i.horario;
+
+      if(!mapa.has(chave)){
+        mapa.set(chave, i);
+      }
     });
 
     return Array.from(mapa.values());
@@ -199,7 +213,7 @@ const FONTES = {
 };
 
 //////////////////////////////////////////////////
-// 🏦 FEDERAL (FIX)
+// 🏦 FEDERAL (🔥 CORRIGIDO)
 //////////////////////////////////////////////////
 
 async function pegarFederal(){
@@ -225,7 +239,7 @@ async function pegarFederal(){
     return resultadoValido(item) ? [item] : [];
 
   }catch(e){
-    console.log("❌ federal falhou (sem fallback)");
+    console.log("❌ federal falhou");
     return [];
   }
 }
@@ -247,7 +261,7 @@ async function pegarTudo(){
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR
+// 💾 SALVAR (🔥 MELHORADO)
 //////////////////////////////////////////////////
 
 async function salvarMongo(dados){
@@ -265,7 +279,7 @@ async function salvarMongo(dados){
 
       try{
 
-        const uniqueId = `${hoje}-${banca}-${item.horario}-${item.p1}`;
+        const uniqueId = `${hoje}-${banca}-${item.horario}`;
 
         await Resultado.findOneAndUpdate(
           { uniqueId },
@@ -281,7 +295,7 @@ async function salvarMongo(dados){
 }
 
 //////////////////////////////////////////////////
-// 📊 HISTÓRICO
+// 📊 HISTÓRICO (🔥 ORDENADO)
 //////////////////////////////////////////////////
 
 async function pegarHistorico(){
@@ -299,6 +313,13 @@ async function pegarHistorico(){
     }
     historico[r.data][r.banca].push(r);
   });
+
+  // ordena por horário
+  for(const data in historico){
+    for(const banca in historico[data]){
+      historico[data][banca].sort((a,b)=> a.horario.localeCompare(b.horario));
+    }
+  }
 
   return historico;
 }
