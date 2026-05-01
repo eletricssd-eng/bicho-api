@@ -348,7 +348,9 @@ async function carregarTudo(){
   const historico = await pegarHistorico();
 
   cache = {
-    atualizado: new Date().toLocaleString(),
+    atualizado: new Date().toLocaleString("pt-BR", {
+      timeZone: "America/Sao_Paulo"
+    }),
     historico
   };
 

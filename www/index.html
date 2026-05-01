@@ -11,8 +11,27 @@
 
 <h1> Jogo do Bicho</h1>
 
-<!-- 🔥 APP DIRETO (SEM LOGIN) -->
+<!-- 🔐 LOGIN -->
+<div id="login" class="tela">
+
+  <h2>Entrar</h2>
+
+  <input id="user" placeholder="Usuário"><br><br>
+  <input id="pass" type="password" placeholder="Senha"><br><br>
+
+  <button onclick="login(user.value, pass.value)">Entrar</button>
+  <button onclick="cadastrar(user.value, pass.value)">Cadastrar</button>
+
+</div>
+
+<!-- 🔥 APP -->
 <div id="app">
+
+  <!-- TOPO -->
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+    <div id="userInfo"></div>
+    <button onclick="logout()">Sair</button>
+  </div>
 
   <!-- MENU -->
   <div class="menu">

@@ -5,6 +5,75 @@ let diaSelecionado = 0;
 let cacheAPI = null;
 let cacheTempo = 0;
 
+// ================= LOGIN =================
+let usuarioAtual = null;
+
+function getUsers(){
+  return JSON.parse(localStorage.getItem("users") || "[]");
+}
+
+function salvarUsers(users){
+  localStorage.setItem("users", JSON.stringify(users));
+}
+
+function cadastrar(usuario, senha){
+  let users = getUsers();
+
+  if(!usuario || !senha){
+    alert("Preencha usuário e senha");
+    return;
+  }
+
+  if(users.find(u => u.usuario === usuario)){
+    alert("Usuário já existe");
+    return;
+  }
+
+  users.push({
+    usuario,
+    senha: btoa(senha)
+  });
+
+  salvarUsers(users);
+  alert("Cadastro realizado!");
+}
+
+function login(usuario, senha){
+  let users = getUsers();
+
+  let user = users.find(u =>
+    u.usuario === usuario &&
+    u.senha === btoa(senha)
+  );
+
+  if(!user){
+    alert("Login inválido");
+    return;
+  }
+
+  usuarioAtual = usuario;
+  localStorage.setItem("sessao", usuario);
+
+  iniciarApp();
+}
+
+function verificarSessao(){
+  const sessao = localStorage.getItem("sessao");
+
+  if(sessao){
+    usuarioAtual = sessao;
+    return true;
+  }
+
+  return false;
+}
+
+function logout(){
+  usuarioAtual = null;
+  localStorage.removeItem("sessao");
+  location.reload();
+}
+
 // ================= BICHOS =================
 const bichos = [
 ["01","🦩","Avestruz"],["02","🦅","Águia"],["03","🐴","Burro"],
@@ -56,6 +125,18 @@ async function getDataCompleto(){
 
 // ================= INIT =================
 function iniciarApp(){
+
+  const login = document.getElementById("login");
+  const app = document.getElementById("app");
+
+  if(login) login.style.display = "none";
+  if(app) app.style.display = "block";
+
+  const userInfo = document.getElementById("userInfo");
+  if(userInfo){
+    userInfo.innerHTML = "👤 " + usuarioAtual;
+  }
+
   renderBotoesBancas();
   renderTabela();
   abrir("home");
@@ -130,12 +211,10 @@ function selecionarBanca(b){
 
 // ================= RESULTADOS =================
 async function carregarResultados(){
-
   const box = document.getElementById("resultadosBox");
   box.innerHTML = "⏳";
 
   try{
-
     const json = await getDataCompleto();
 
     if(!json || !json.historico){
@@ -167,16 +246,9 @@ async function carregarResultados(){
     const [ano,mes,dia] = hoje.split("-");
     const dataBR = `${dia}/${mes}/${ano}`;
 
-    let html = `
-  <div style="
-    display:grid;
-    grid-template-columns:repeat(3,1fr);
-    gap:10px;
-  ">
-`;
+    let html = `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">`;
 
     html += lista.map(item=>{
-
       let horaMatch = item.horario.match(/\d{1,2}:\d{2}/);
       let hora = horaMatch ? horaMatch[0] : "??:??";
 
@@ -207,7 +279,6 @@ async function carregarResultados(){
 
 // ================= ANALISE =================
 async function carregarAnalise(){
-
   const box = document.getElementById("analiseBox");
   box.innerHTML="⏳";
 
@@ -262,7 +333,6 @@ async function carregarAnalise(){
 
 // ================= MAPA =================
 function renderBotoesMapa(){
-
   const box = document.getElementById("mapaBotoes");
 
   box.innerHTML = [0,1,2,3,4,5,6].map(d=>`
@@ -324,7 +394,31 @@ async function carregarMapa(banca="rio", dia=0){
   `;
 }
 
-// ================= PALPITE =================
+// ================= IA =================
+function getIA(banca){
+  if(!usuarioAtual) return {};
+  const key = `ia_${usuarioAtual}_${banca}`;
+  return JSON.parse(localStorage.getItem(key) || "{}");
+}
+
+function salvarIA(banca, data){
+  if(!usuarioAtual) return;
+  const key = `ia_${usuarioAtual}_${banca}`;
+  localStorage.setItem(key, JSON.stringify(data));
+}
+
+// ================= IA EXTRA =================
+function salvarUltimoPalpite(banca, dados){
+  if(!usuarioAtual) return;
+  localStorage.setItem(`palpite_${usuarioAtual}_${banca}`, JSON.stringify(dados));
+}
+
+function getUltimoPalpite(banca){
+  if(!usuarioAtual) return null;
+  return JSON.parse(localStorage.getItem(`palpite_${usuarioAtual}_${banca}`));
+}
+
+// ================= PALPITE (COMPLETO ORIGINAL) =================
 async function carregarPalpite(banca = bancaAtual){
 
   const box = document.getElementById("palpiteBox");
@@ -346,50 +440,180 @@ async function carregarPalpite(banca = bancaAtual){
       .slice(0,7);
 
     let grupos={}, dezenas={}, centenas={}, milhares={};
+    let atraso = {};
+    let resultadosRecentes = [];
 
-    datas.forEach(d=>{
+    // ================= BASE =================
+    datas.forEach((d,index)=>{
 
+      const pesoTempo = 1 - (index * 0.12);
       const lista = historico[d]?.[banca] || [];
 
       lista.forEach(item=>{
-
         [item.p1,item.p2,item.p3,item.p4,item.p5].forEach(num=>{
 
           if(!num) return;
 
           let n = String(num).padStart(4,"0");
 
+          resultadosRecentes.push(n);
+
           const dez = n.slice(-2);
           const cen = n.slice(-3);
-          const mil = n;
 
-          dezenas[dez]=(dezenas[dez]||0)+1;
-          centenas[cen]=(centenas[cen]||0)+1;
-          milhares[mil]=(milhares[mil]||0)+1;
+          dezenas[dez]=(dezenas[dez]||0)+pesoTempo;
+          centenas[cen]=(centenas[cen]||0)+pesoTempo;
+          milhares[n]=(milhares[n]||0)+pesoTempo;
 
           const grupo = (dez === "00") ? 25 : Math.ceil(parseInt(dez)/4);
-          grupos[grupo]=(grupos[grupo]||0)+1;
+          grupos[grupo]=(grupos[grupo]||0)+pesoTempo;
 
+          atraso[dez] = 0;
         });
+      });
 
+      Object.keys(dezenas).forEach(dz=>{
+        if(atraso[dz] === undefined){
+          atraso[dz] = 1;
+        } else {
+          atraso[dz]++;
+        }
       });
 
     });
 
-    // 🔥 pega TOP
-    const top = (obj,n)=>
-      Object.entries(obj)
+    // ================= IA APRENDE ERRO/ACERTO =================
+    function aprenderResultadoReal(){
+
+      const ultimo = getUltimoPalpite(banca);
+      if(!ultimo) return;
+
+      if(ultimo.data === datas[0]) return;
+
+      let ia = getIA(banca);
+
+      const listaHoje = historico[datas[0]]?.[banca] || [];
+      let resultadosHoje = [];
+
+      listaHoje.forEach(item=>{
+        [item.p1,item.p2,item.p3,item.p4,item.p5].forEach(n=>{
+          if(!n) return;
+          resultadosHoje.push(extrairDezena(n));
+        });
+      });
+
+      ultimo.dezenas.forEach(p=>{
+
+        if(!ia[p]) ia[p] = {score:0, vezes:0};
+
+        if(resultadosHoje.includes(p)){
+          ia[p].score += 2; // acertou
+        }else{
+          ia[p].score -= 0.7; // errou
+        }
+
+        ia[p].vezes++;
+      });
+
+      salvarIA(banca, ia);
+    }
+
+    aprenderResultadoReal();
+
+    // ================= IA BASE =================
+    function atualizarIAcontrolada(){
+
+      let ia = getIA(banca);
+
+      if(ia._lastUpdate === datas[0]) return;
+
+      resultadosRecentes.forEach(num=>{
+
+        let n = String(num).padStart(4,"0");
+
+        if(!ia[n]) ia[n] = {score:0, vezes:0};
+
+        ia[n].score += 0.5;
+        ia[n].vezes++;
+
+        if(ia[n].score > 10) ia[n].score = 10;
+      });
+
+      // decay
+      Object.keys(ia).forEach(k=>{
+        if(typeof ia[k] === "object"){
+          ia[k].score *= 0.98;
+        }
+      });
+
+      ia._lastUpdate = datas[0];
+
+      salvarIA(banca, ia);
+    }
+
+    atualizarIAcontrolada();
+
+    const ia = getIA(banca);
+
+    // ================= SEQUÊNCIA =================
+    let transicao = {};
+
+    for(let i=0;i<resultadosRecentes.length-1;i++){
+
+      let atual = extrairDezena(resultadosRecentes[i]);
+      let prox = extrairDezena(resultadosRecentes[i+1]);
+
+      if(!atual || !prox) continue;
+
+      if(!transicao[atual]) transicao[atual] = {};
+      transicao[atual][prox] = (transicao[atual][prox] || 0) + 1;
+    }
+
+    const ultimoResultado = extrairDezena(resultadosRecentes[0]);
+    let tendencia = transicao[ultimoResultado] || {};
+
+    // ================= SCORE =================
+    function topIA(obj, n){
+
+      return Object.entries(obj)
+        .map(([num, freq])=>{
+
+          const bonusIA = (ia[num]?.score || 0);
+          const bonusAtraso = Math.min((atraso[num] || 0), 5);
+          const bonusSeq = (tendencia[num] || 0) * 0.6;
+
+          let score =
+            (freq * 0.45) +
+            (bonusIA * 0.20) +
+            (bonusAtraso * 0.15) +
+            (bonusSeq * 0.20);
+
+          score += Math.random() * 0.25;
+
+          return [num, score];
+        })
         .sort((a,b)=>b[1]-a[1])
         .slice(0,n)
         .map(i=>i[0]);
+    }
 
-    const gTop = top(grupos,3);
-    const dTop = top(dezenas,3);
-    const cTop = top(centenas,3);
-    const mTop = top(milhares,3);
+    const ultimos = resultadosRecentes.slice(0,25);
 
-    // 🔥 DUQUE
-    const duque = (arr)=>{
+    const filtrarRecentes = arr =>
+      arr.filter(n => !ultimos.includes(n)).slice(0,3);
+
+    const gTop = topIA(grupos,5).slice(0,3);
+    const dTop = filtrarRecentes(topIA(dezenas,6));
+    const cTop = topIA(centenas,3);
+    const mTop = topIA(milhares,3);
+
+    // salvar para IA aprender depois
+    salvarUltimoPalpite(banca, {
+      dezenas: dTop,
+      data: datas[0]
+    });
+
+    function duque(arr){
       let out=[];
       for(let i=0;i<arr.length;i++){
         for(let j=i+1;j<arr.length;j++){
@@ -397,69 +621,38 @@ async function carregarPalpite(banca = bancaAtual){
         }
       }
       return out;
-    };
+    }
 
-    // 🔥 TERNO
-    const terno = (arr)=>{
+    function terno(arr){
       if(arr.length < 3) return [];
       return [`${arr[0]}-${arr[1]}-${arr[2]}`];
-    };
+    }
 
-    // 🔥 CARD PADRÃO
     function card(titulo, valor){
 
-  const texto = valor.length ? valor.join(" | ") : "-";
+      const texto = valor.length ? valor.join(" | ") : "-";
 
-  return `
-    <div class="card" style="
-      padding:12px;
-      text-align:center;
-    ">
+      return `
+        <div class="card">
+          <b>${titulo}</b>
+          <div>${valor.join("<br>")}</div>
+          <button onclick="copiarTexto('${texto}')">copiar</button>
+        </div>
+      `;
+    }
 
-      <b>${titulo}</b>
-
-      <div style="margin:10px 0; font-size:14px;">
-        ${valor.join("<br>")}
-      </div>
-
-      <button onclick="copiarTexto('${texto}')"
-        style="
-          background:#222;
-          color:#fff;
-          border:none;
-          border-radius:6px;
-          padding:6px 10px;
-          width:100%;
-          margin-top:8px;
-        ">
-        copiar
-      </button>
-
-    </div>
-  `;
-}
-
-    // 🔥 GRID BONITO
     box.innerHTML = `
-  <div style="
-    display:grid;
-    grid-template-columns:repeat(3,1fr);
-    gap:10px;
-  ">
-
-    ${card("Grupo", gTop)}
-    ${card("Dezena", dTop)}
-    ${card("Centena", cTop)}
-    ${card("Milhar", mTop)}
-
-    ${card("Duque Grupo", duque(gTop))}
-    ${card("Duque Dezena", duque(dTop))}
-
-    ${card("Terno Grupo", terno(gTop))}
-    ${card("Terno Dezena", terno(dTop))}
-
-  </div>
-`;
+      <div class="grid-3">
+        ${card("Grupo", gTop)}
+        ${card("Dezena", dTop)}
+        ${card("Centena", cTop)}
+        ${card("Milhar", mTop)}
+        ${card("Duque Grupo", duque(gTop))}
+        ${card("Duque Dezena", duque(dTop))}
+        ${card("Terno Grupo", terno(gTop))}
+        ${card("Terno Dezena", terno(dTop))}
+      </div>
+    `;
 
   }catch(e){
     console.error(e);
@@ -469,11 +662,22 @@ async function carregarPalpite(banca = bancaAtual){
 
 // ================= INIT =================
 window.onload = ()=>{
-  iniciarApp();
+
+  const app = document.getElementById("app");
+
+  if(verificarSessao()){
+    iniciarApp();
+  }else{
+    if(app) app.style.display = "none";
+    abrir("login");
+  }
+
 };
+
 window.gerarPalpite = function(){
   carregarPalpite(bancaAtual);
 };
+
 window.copiarTexto = function(texto){
   navigator.clipboard.writeText(texto)
     .then(()=> alert("✅ Copiado!"))
