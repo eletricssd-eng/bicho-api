@@ -73,7 +73,7 @@ function resultadoValido(item){
 }
 
 //////////////////////////////////////////////////
-// 🧠 NORMALIZA HORÁRIO
+// 🧠 HORÁRIO
 //////////////////////////////////////////////////
 
 function limparHorario(texto){
@@ -89,14 +89,14 @@ function limparHorario(texto){
 }
 
 //////////////////////////////////////////////////
-// 🔧 MONTA ITEM (🔥 FALTAVA)
+// 🔧 MONTA ITEM
 //////////////////////////////////////////////////
 
-function montarItem(nums, titulo){
+function montarItem(nums, origem){
   if(!nums || nums.length < 5) return null;
 
   const item = {
-    horario: limparHorario(titulo),
+    horario: limparHorario(origem),
     p1: nums[0],
     p2: nums[1],
     p3: nums[2],
@@ -147,26 +147,31 @@ async function scraper(url){
     //////////////////////////////////////////
     // 2️⃣ DIV (fallback)
     //////////////////////////////////////////
-    if(lista.length < 2){
+    if(lista.length < 3){
 
       $("div").each((i, div)=>{
 
         const texto = $(div).text();
+
+        // evita div gigante (ruído)
+        if(texto.length > 500) return;
+
         const numeros = texto.match(/\d{4}/g);
 
         if(numeros && numeros.length >= 5){
 
           const horarioTexto = texto.match(/\d{1,2}:\d{2}|\d{1,2}h/);
-          const horario = limparHorario(horarioTexto?.[0]);
+          const origem = horarioTexto?.[0] || "extra";
 
-          const item = montarItem(numeros, horario);
+          const item = montarItem(numeros, origem);
+
           if(item) lista.push(item);
         }
       });
     }
 
     //////////////////////////////////////////
-    // 3️⃣ TEXTO PURO
+    // 3️⃣ TEXTO PURO (último recurso)
     //////////////////////////////////////////
     if(lista.length < 2){
 
@@ -181,6 +186,7 @@ async function scraper(url){
           if(bloco.length === 5){
 
             const item = montarItem(bloco, "extra");
+
             if(item) lista.push(item);
           }
         }
@@ -188,12 +194,12 @@ async function scraper(url){
     }
 
     //////////////////////////////////////////
-    // 🔥 DEDUP MELHORADO
+    // 🔥 DEDUP FORTE
     //////////////////////////////////////////
     const mapa = new Map();
 
     lista.forEach(i=>{
-      const chave = `${i.horario}-${i.p1}-${i.p2}`;
+      const chave = `${i.horario}-${i.p1}-${i.p2}-${i.p3}`;
       if(!mapa.has(chave)){
         mapa.set(chave, i);
       }
@@ -271,7 +277,7 @@ async function pegarFederal(){
 
     return resultadoValido(item) ? [item] : [];
 
-  }catch(e){
+  }catch{
     console.log("❌ federal falhou");
     return [];
   }
@@ -282,7 +288,6 @@ async function pegarFederal(){
 //////////////////////////////////////////////////
 
 async function pegarTudo(){
-
   const [rio, look, nacional, federal] = await Promise.all([
     tentarFontes(FONTES.rio),
     tentarFontes(FONTES.look),
@@ -308,15 +313,15 @@ async function salvarMongo(dados){
 
   for(const banca in dados){
     for(const item of dados[banca]){
-      try{
-        const uniqueId = `${hoje}-${banca}-${item.horario}`;
 
+      const uniqueId = `${hoje}-${banca}-${item.horario}`;
+
+      try{
         await Resultado.findOneAndUpdate(
           { uniqueId },
           { ...item, data: hoje, banca, uniqueId },
           { upsert: true }
         );
-
       }catch(e){
         console.log("❌ erro salvar:", e.message);
       }
