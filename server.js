@@ -16,22 +16,18 @@ const PORT = process.env.PORT || 3000;
 
 const MONGO_URL = process.env.MONGO_URL;
 
-async function conectarMongo(){
-  if(!MONGO_URL){
-    console.log("❌ MONGO_URL NÃO DEFINIDA");
-    return;
-  }
-
-  try{
+async function conectarMongo() {
+  try {
     await mongoose.connect(MONGO_URL, {
       serverSelectionTimeoutMS: 5000
     });
     console.log("✅ Mongo conectado");
-  }catch(e){
+  } catch (e) {
     console.log("❌ erro mongo:", e.message);
     setTimeout(conectarMongo, 5000);
   }
 }
+
 conectarMongo();
 
 //////////////////////////////////////////////////
@@ -53,219 +49,125 @@ const ResultadoSchema = new mongoose.Schema({
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
-// 🧠 VALIDAÇÃO
+// 🧠 VALIDAÇÃO FORTE
 //////////////////////////////////////////////////
 
-function resultadoValido(item){
-  if(!item) return false;
+function resultadoValido(r) {
+  const invalidos = [
+    "0000","1111","2222","3333","4444",
+    "5555","6666","7777","8888","9999","2026"
+  ];
 
-  const nums = [item.p1, item.p2, item.p3, item.p4, item.p5];
+  const lista = [r.p1, r.p2, r.p3, r.p4, r.p5];
 
-  if(nums.some(n => !n)) return false;
-  if(nums.some(n => !/^\d{4}$/.test(n))) return false;
+  // bloqueia qualquer número fake
+  if (lista.some(n => invalidos.includes(n))) return false;
 
-  // bloqueia lixo óbvio
-  if(nums.every(n => n === nums[0])) return false;
-
-  // evita ano tipo 2026 em massa
-  const anoCount = nums.filter(n => n.startsWith("20")).length;
-  if(anoCount >= 3) return false;
+  // bloqueia "extração"
+  if (r.horario.toLowerCase().includes("extra")) return false;
 
   return true;
 }
 
-function limparHorario(texto){
-  if(!texto) return "extra";
-
-  const match = texto.match(/\d{2}:\d{2}|\d{2}h/);
-  return match ? match[0].replace("h", ":00") : "extra";
-}
-
 //////////////////////////////////////////////////
-// 🔍 SCRAPER
+// 🔍 SCRAPER FORTE (ANTI 403)
 //////////////////////////////////////////////////
 
-async function scraper(url){
-  try{
+async function scraper(url) {
+  try {
     const { data } = await axios.get(url, {
-      headers:{ "User-Agent":"Mozilla/5.0" },
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Accept-Language": "pt-BR,pt;q=0.9",
+        "Accept": "text/html,application/xhtml+xml",
+        "Connection": "keep-alive"
+      },
       timeout: 15000
     });
 
     const $ = cheerio.load(data);
-    let lista = [];
+    const lista = [];
 
-    $("table").each((i, tabela)=>{
+    $("table").each((i, tabela) => {
 
       let titulo = $(tabela).prevAll("h2,h3,strong").first().text().trim();
-      if(!titulo) titulo = "extra";
+      if (!titulo) return;
 
       const nums = [];
 
-      $(tabela).find("tr").each((i,tr)=>{
+      $(tabela).find("tr").each((i, tr) => {
         const match = $(tr).text().match(/\d{4}/g);
-        if(match) nums.push(...match);
+        if (match) {
+          match.forEach(n => nums.push(n));
+        }
       });
 
-      if(nums.length >= 5){
-
-        const item = {
-          horario: limparHorario(titulo),
+      if (nums.length >= 5) {
+        lista.push({
+          horario: titulo,
           p1: nums[0],
           p2: nums[1],
           p3: nums[2],
           p4: nums[3],
           p5: nums[4]
-        };
-
-        if(resultadoValido(item)){
-          lista.push(item);
-        }
+        });
       }
     });
 
-    // fallback mais restrito
-    if(lista.length === 0){
+    return lista;
 
-      const numeros = $("body").text().match(/\d{4}/g);
-
-      if(numeros && numeros.length >= 10){
-
-        const item = {
-          horario: "extra",
-          p1: numeros[0],
-          p2: numeros[1],
-          p3: numeros[2],
-          p4: numeros[3],
-          p5: numeros[4]
-        };
-
-        if(resultadoValido(item)){
-          lista.push(item);
-        }
-      }
-    }
-
-    // remove duplicados
-    const mapa = new Map();
-    lista.forEach(i => {
-      mapa.set(i.horario + i.p1, i);
-    });
-
-    return Array.from(mapa.values());
-
-  }catch(e){
-    console.log("❌ erro scraper:", url);
+  } catch (e) {
+    console.log("❌ erro scraper:", url, e.message);
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🔁 FALLBACK
+// 🏦 BANCAS
 //////////////////////////////////////////////////
 
-async function tentarFontes(fontes){
-  for(const url of fontes){
-    const dados = await scraper(url);
-
-    if(dados.length >= 1){
-      console.log("✅ fonte OK:", url);
-      return dados;
-    }
-
-    console.log("⚠️ falhou:", url);
-  }
-  return [];
-}
-
-//////////////////////////////////////////////////
-// 🌐 FONTES
-//////////////////////////////////////////////////
-
-const FONTES = {
-  rio: [
-    "https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje",
-    "https://resultadofacil.net/resultados-do-rio-de-hoje",
-    "https://www.resultadodobichohoje.com.br/rio"
-  ],
-  look: [
-    "https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje",
-    "https://resultadofacil.net/look-loterias-de-hoje"
-  ],
-  nacional: [
-    "https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje",
-    "https://resultadofacil.net/loteria-nacional-de-hoje"
-  ]
-};
-
-//////////////////////////////////////////////////
-// 🏦 FEDERAL (FIX)
-//////////////////////////////////////////////////
-
-async function pegarFederal(){
-  try{
-    const { data } = await axios.get(
-      "https://servicebus2.caixa.gov.br/portaldeloterias/api/federal",
-      { timeout: 10000 }
-    );
-
-    if(!data?.listaResultado?.length) return [];
-
-    const r = data.listaResultado[0];
-
-    const item = {
-      horario: "federal",
-      p1: r.premio1,
-      p2: r.premio2,
-      p3: r.premio3,
-      p4: r.premio4,
-      p5: r.premio5
-    };
-
-    return resultadoValido(item) ? [item] : [];
-
-  }catch(e){
-    console.log("❌ federal falhou (sem fallback)");
-    return [];
-  }
-}
-
-//////////////////////////////////////////////////
-// 🏦 PEGAR TUDO
-//////////////////////////////////////////////////
-
-async function pegarTudo(){
+async function pegarTudo() {
 
   const [rio, look, nacional, federal] = await Promise.all([
-    tentarFontes(FONTES.rio),
-    tentarFontes(FONTES.look),
-    tentarFontes(FONTES.nacional),
-    pegarFederal()
+    scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
+    scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
+    scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje"),
+    scraper("https://www.resultadofacil.com.br/resultado-banca-federal")
   ]);
 
-  return { rio, look, nacional, federal };
+  return {
+    rio,
+    look,
+    nacional,
+    federal: federal.length ? [federal[0]] : []
+  };
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR
+// 💾 SALVAR (COM FILTRO)
 //////////////////////////////////////////////////
 
-async function salvarMongo(dados){
+async function salvarMongo(dados) {
 
-  if(mongoose.connection.readyState !== 1){
+  if (mongoose.connection.readyState !== 1) {
     console.log("⚠️ Mongo offline");
     return;
   }
 
   const hoje = new Date().toISOString().split("T")[0];
 
-  for(const banca in dados){
+  for (const banca in dados) {
 
-    for(const item of dados[banca]){
+    for (const item of dados[banca]) {
 
-      try{
+      // 🔥 valida antes de salvar
+      if (!resultadoValido(item)) {
+        console.log("🚫 IGNORADO:", item.horario);
+        continue;
+      }
 
-        const uniqueId = `${hoje}-${banca}-${item.horario}-${item.p1}`;
+      try {
+        const uniqueId = `${hoje}-${banca}-${item.horario}`;
 
         await Resultado.findOneAndUpdate(
           { uniqueId },
@@ -273,7 +175,9 @@ async function salvarMongo(dados){
           { upsert: true }
         );
 
-      }catch(e){
+        console.log("✅ SALVO:", uniqueId);
+
+      } catch (e) {
         console.log("❌ erro salvar:", e.message);
       }
     }
@@ -284,19 +188,23 @@ async function salvarMongo(dados){
 // 📊 HISTÓRICO
 //////////////////////////////////////////////////
 
-async function pegarHistorico(){
-
-  if(mongoose.connection.readyState !== 1) return {};
+async function pegarHistorico() {
 
   const dados = await Resultado.find().lean();
+
   const historico = {};
 
-  dados.forEach(r=>{
-    if(!historico[r.data]){
+  dados.forEach(r => {
+
+    if (!historico[r.data]) {
       historico[r.data] = {
-        rio: [], look: [], nacional: [], federal: []
+        rio: [],
+        look: [],
+        nacional: [],
+        federal: []
       };
     }
+
     historico[r.data][r.banca].push(r);
   });
 
@@ -310,15 +218,15 @@ async function pegarHistorico(){
 let cache = null;
 let tempo = 0;
 
-async function carregarTudo(){
+async function carregarTudo() {
 
   const agora = Date.now();
 
-  if(cache && (agora - tempo < 60000)){
+  if (cache && (agora - tempo < 60000)) {
     return cache;
   }
 
-  console.log("🔄 atualizando...");
+  console.log("🔄 ATUALIZANDO...");
 
   const dados = await pegarTudo();
 
@@ -340,19 +248,17 @@ async function carregarTudo(){
 // 🌐 ROTAS
 //////////////////////////////////////////////////
 
-app.get("/", (req,res)=>{
+app.get("/", (req, res) => {
   res.send("✅ API ONLINE");
 });
 
-app.get("/resultados", async (req,res)=>{
-  try{
+app.get("/resultados", async (req, res) => {
+  try {
     const dados = await carregarTudo();
     res.json(dados);
-  }catch(e){
-    res.status(500).json({
-      erro: "Erro interno",
-      detalhe: e.message
-    });
+  } catch (e) {
+    console.log("❌ ERRO:", e.message);
+    res.status(500).json({ erro: e.message });
   }
 });
 
@@ -360,6 +266,6 @@ app.get("/resultados", async (req,res)=>{
 // 🚀 START
 //////////////////////////////////////////////////
 
-app.listen(PORT, ()=>{
-  console.log("🚀 API rodando na porta", PORT);
+app.listen(PORT, () => {
+  console.log("🚀 Rodando na porta", PORT);
 });
