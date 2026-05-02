@@ -335,7 +335,7 @@ async function carregarTudo(){
 
   const agora = Date.now();
 
-  if(cache && (agora - tempo < 60000)){
+  if(cache && (agora - tempo < 20000)){
     return cache;
   }
 
