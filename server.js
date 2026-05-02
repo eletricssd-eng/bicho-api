@@ -11,7 +11,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 //////////////////////////////////////////////////
-// 🔥 ANTI-BLOQUEIO PROFISSIONAL
+// 🔥 ANTI-BLOQUEIO + SCORE
 //////////////////////////////////////////////////
 
 const USER_AGENTS = [
@@ -51,7 +51,6 @@ async function fetchComRetry(url, tentativas = 3){
       });
 
       if(response.status >= 200 && response.status < 300){
-        aumentarScore(url);
         return response.data;
       }
 
@@ -156,7 +155,7 @@ async function scraper(url){
 
   const data = await fetchComRetry(url);
 
-  if(!data){
+  if(!data || typeof data !== "string"){
     console.log("❌ falha total:", url);
     return [];
   }
@@ -171,12 +170,14 @@ async function scraper(url){
       let titulo = $(tabela).prevAll("h2,h3,strong").first().text().trim();
       if(!titulo) titulo = "extra";
 
-      const nums = [];
+      let nums = [];
 
       $(tabela).find("tr").each((i,tr)=>{
-        const match = $(tr).text().match(/\d{4}/g);
+        const match = $(tr).text().match(/\b\d{4}\b/g);
         if(match) nums.push(...match);
       });
+
+      nums = nums.map(n => n.trim());
 
       if(nums.length >= 5){
 
@@ -195,24 +196,34 @@ async function scraper(url){
       }
     });
 
-    // FALLBACK TEXTO
+    // FALLBACK
     if(lista.length === 0){
 
-      const numeros = $("body").text().match(/\d{4}/g);
+      let numeros = $("body").text().match(/\b\d{4}\b/g);
 
       if(numeros && numeros.length >= 10){
 
-        const item = {
-          horario: "extra",
-          p1: numeros[0],
-          p2: numeros[1],
-          p3: numeros[2],
-          p4: numeros[3],
-          p5: numeros[4]
-        };
+        numeros = numeros.map(n => n.trim());
 
-        if(resultadoValido(item)){
-          lista.push(item);
+        for(let i = 0; i < numeros.length; i += 5){
+
+          const bloco = numeros.slice(i, i+5);
+
+          if(bloco.length === 5){
+
+            const item = {
+              horario: "extra",
+              p1: bloco[0],
+              p2: bloco[1],
+              p3: bloco[2],
+              p4: bloco[3],
+              p5: bloco[4]
+            };
+
+            if(resultadoValido(item)){
+              lista.push(item);
+            }
+          }
         }
       }
     }
@@ -221,7 +232,7 @@ async function scraper(url){
     const mapa = new Map();
 
     lista.forEach(i=>{
-      const chave = i.horario;
+      const chave = `${i.horario}-${i.p1}`;
       if(!mapa.has(chave)){
         mapa.set(chave, i);
       }
@@ -273,15 +284,24 @@ async function tentarFontes(fontes){
 
 const FONTES = {
   rio: [
+    "https://bichodata.com",
+    "https://ejogodobicho.com",
+    "https://www.resultadodobichohoje.com.br/rio",
+    "https://playbicho.com/resultado-jogo-do-bicho",
     "https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje",
-    "https://resultadofacil.net/resultados-do-rio-de-hoje",
-    "https://www.resultadodobichohoje.com.br/rio"
+    "https://resultadofacil.net/resultados-do-rio-de-hoje"
   ],
   look: [
+    "https://bichodata.com",
+    "https://playbicho.com/resultado-jogo-do-bicho",
+    "https://ejogodobicho.com",
     "https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje",
     "https://resultadofacil.net/look-loterias-de-hoje"
   ],
   nacional: [
+    "https://bichodata.com",
+    "https://ejogodobicho.com",
+    "https://playbicho.com/resultado-jogo-do-bicho",
     "https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje",
     "https://resultadofacil.net/loteria-nacional-de-hoje"
   ]
