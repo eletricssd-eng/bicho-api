@@ -73,25 +73,42 @@ function resultadoValido(item){
 }
 
 //////////////////////////////////////////////////
-// 🧠 NORMALIZA HORÁRIO (🔥 MELHORADO)
+// 🧠 NORMALIZA HORÁRIO
 //////////////////////////////////////////////////
 
 function limparHorario(texto){
   if(!texto) return "extra";
 
   const match = texto.match(/\d{1,2}:\d{2}|\d{1,2}h/);
-
   if(!match) return "extra";
 
   let h = match[0].replace("h", ":00");
 
   const [hora, min] = h.split(":");
-
   return `${hora.padStart(2,"0")}:${min}`;
 }
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER
+// 🔧 MONTA ITEM (🔥 FALTAVA)
+//////////////////////////////////////////////////
+
+function montarItem(nums, titulo){
+  if(!nums || nums.length < 5) return null;
+
+  const item = {
+    horario: limparHorario(titulo),
+    p1: nums[0],
+    p2: nums[1],
+    p3: nums[2],
+    p4: nums[3],
+    p5: nums[4]
+  };
+
+  return resultadoValido(item) ? item : null;
+}
+
+//////////////////////////////////////////////////
+// 🔍 SCRAPER MULTI-ESTRUTURA
 //////////////////////////////////////////////////
 
 async function scraper(url){
@@ -101,11 +118,13 @@ async function scraper(url){
       timeout: 15000
     });
 
+    if(!data) return [];
+
     const $ = cheerio.load(data);
     let lista = [];
 
     //////////////////////////////////////////
-    // 1️⃣ TABLE (se existir)
+    // 1️⃣ TABLE
     //////////////////////////////////////////
     $("table").each((i, tabela)=>{
 
@@ -126,34 +145,30 @@ async function scraper(url){
     });
 
     //////////////////////////////////////////
-    // 2️⃣ DIV (fallback estruturado)
+    // 2️⃣ DIV (fallback)
     //////////////////////////////////////////
-    if(lista.length === 0){
+    if(lista.length < 2){
 
       $("div").each((i, div)=>{
 
         const texto = $(div).text();
-
-        // pega blocos que tenham pelo menos 5 números
         const numeros = texto.match(/\d{4}/g);
 
         if(numeros && numeros.length >= 5){
 
-          // tenta extrair horário próximo
           const horarioTexto = texto.match(/\d{1,2}:\d{2}|\d{1,2}h/);
           const horario = limparHorario(horarioTexto?.[0]);
 
           const item = montarItem(numeros, horario);
-
           if(item) lista.push(item);
         }
       });
     }
 
     //////////////////////////////////////////
-    // 3️⃣ TEXTO PURO (fallback agressivo)
+    // 3️⃣ TEXTO PURO
     //////////////////////////////////////////
-    if(lista.length === 0){
+    if(lista.length < 2){
 
       const numeros = $("body").text().match(/\d{4}/g);
 
@@ -166,7 +181,6 @@ async function scraper(url){
           if(bloco.length === 5){
 
             const item = montarItem(bloco, "extra");
-
             if(item) lista.push(item);
           }
         }
@@ -174,12 +188,12 @@ async function scraper(url){
     }
 
     //////////////////////////////////////////
-    // 🔥 DEDUP INTELIGENTE
+    // 🔥 DEDUP MELHORADO
     //////////////////////////////////////////
     const mapa = new Map();
 
     lista.forEach(i=>{
-      const chave = i.horario + "-" + i.p1; // mais confiável que só horário
+      const chave = `${i.horario}-${i.p1}-${i.p2}`;
       if(!mapa.has(chave)){
         mapa.set(chave, i);
       }
@@ -232,7 +246,7 @@ const FONTES = {
 };
 
 //////////////////////////////////////////////////
-// 🏦 FEDERAL (🔥 CORRIGIDO)
+// 🏦 FEDERAL
 //////////////////////////////////////////////////
 
 async function pegarFederal(){
@@ -280,7 +294,7 @@ async function pegarTudo(){
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR (🔥 MELHORADO)
+// 💾 SALVAR
 //////////////////////////////////////////////////
 
 async function salvarMongo(dados){
@@ -293,11 +307,8 @@ async function salvarMongo(dados){
   const hoje = new Date().toISOString().split("T")[0];
 
   for(const banca in dados){
-
     for(const item of dados[banca]){
-
       try{
-
         const uniqueId = `${hoje}-${banca}-${item.horario}`;
 
         await Resultado.findOneAndUpdate(
@@ -314,7 +325,7 @@ async function salvarMongo(dados){
 }
 
 //////////////////////////////////////////////////
-// 📊 HISTÓRICO (🔥 ORDENADO)
+// 📊 HISTÓRICO
 //////////////////////////////////////////////////
 
 async function pegarHistorico(){
@@ -333,7 +344,6 @@ async function pegarHistorico(){
     historico[r.data][r.banca].push(r);
   });
 
-  // ordena por horário
   for(const data in historico){
     for(const banca in historico[data]){
       historico[data][banca].sort((a,b)=> a.horario.localeCompare(b.horario));
@@ -367,7 +377,7 @@ async function carregarTudo(){
   const historico = await pegarHistorico();
 
   cache = {
-    atualizado: new Date().toLocaleString(),
+    atualizado: new Date().toLocaleString("pt-BR"),
     historico
   };
 
