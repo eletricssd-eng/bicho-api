@@ -3,6 +3,7 @@ import axios from "axios";
 import cors from "cors";
 import * as cheerio from "cheerio";
 import mongoose from "mongoose";
+import https from "https";
 
 const app = express();
 app.use(cors());
@@ -13,6 +14,10 @@ const PORT = process.env.PORT || 3000;
 //////////////////////////////////////////////////
 // 🔥 ANTI-BLOQUEIO + SCORE
 //////////////////////////////////////////////////
+
+const httpsAgent = new https.Agent({
+  rejectUnauthorized: false
+});
 
 const USER_AGENTS = [
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
@@ -38,11 +43,10 @@ function diminuirScore(url){
 async function fetchComRetry(url, tentativas = 3){
 
   for(let i = 0; i < tentativas; i++){
-
     try{
-
       const response = await axios.get(url, {
         timeout: 15000,
+        httpsAgent,
         headers: {
           "User-Agent": USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)],
           "Accept": "text/html,application/xhtml+xml"
@@ -51,16 +55,16 @@ async function fetchComRetry(url, tentativas = 3){
       });
 
       if(response.status >= 200 && response.status < 300){
+        aumentarScore(url);
         return response.data;
       }
 
       if(response.status >= 500){
         diminuirScore(url);
         await delay(1000 * (i+1));
-        continue;
       }
 
-    }catch(e){
+    }catch{
       diminuirScore(url);
       await delay(1000 * (i+1));
     }
@@ -112,6 +116,22 @@ const ResultadoSchema = new mongoose.Schema({
 const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
+// 🧠 FILTRO PROFISSIONAL
+//////////////////////////////////////////////////
+
+function limparNumerosValidos(nums){
+  return nums.filter(n => {
+    const num = parseInt(n);
+
+    if(num < 1000 || num > 9999) return false;
+    if(n === "0000") return false;
+    if(/^(\d)\1{3}$/.test(n)) return false;
+
+    return true;
+  });
+}
+
+//////////////////////////////////////////////////
 // 🧠 VALIDAÇÃO
 //////////////////////////////////////////////////
 
@@ -122,11 +142,7 @@ function resultadoValido(item){
 
   if(nums.some(n => !n)) return false;
   if(nums.some(n => !/^\d{4}$/.test(n))) return false;
-
   if(nums.every(n => n === nums[0])) return false;
-
-  const anoCount = nums.filter(n => n.startsWith("20")).length;
-  if(anoCount >= 3) return false;
 
   return true;
 }
@@ -136,10 +152,10 @@ function resultadoValido(item){
 //////////////////////////////////////////////////
 
 function limparHorario(texto){
-  if(!texto) return "extra";
+  if(!texto) return null;
 
   const match = texto.match(/\d{1,2}:\d{2}|\d{1,2}h/);
-  if(!match) return "extra";
+  if(!match) return null;
 
   let h = match[0].replace("h", ":00");
 
@@ -164,11 +180,17 @@ async function scraper(url){
     const $ = cheerio.load(data);
     let lista = [];
 
+    const textoPagina = $("body").text();
+
+    // 🚨 evita páginas lixo
+    if(!/resultado|extração|prêmio/i.test(textoPagina)){
+      return [];
+    }
+
     // TABLE
     $("table").each((i, tabela)=>{
 
       let titulo = $(tabela).prevAll("h2,h3,strong").first().text().trim();
-      if(!titulo) titulo = "extra";
 
       let nums = [];
 
@@ -177,12 +199,15 @@ async function scraper(url){
         if(match) nums.push(...match);
       });
 
-      nums = nums.map(n => n.trim());
+      nums = limparNumerosValidos(nums.map(n => n.trim()));
 
       if(nums.length >= 5){
 
+        const horario = limparHorario(titulo);
+        if(!horario) return;
+
         const item = {
-          horario: limparHorario(titulo),
+          horario,
           p1: nums[0],
           p2: nums[1],
           p3: nums[2],
@@ -196,14 +221,14 @@ async function scraper(url){
       }
     });
 
-    // FALLBACK
+    // FALLBACK CONTROLADO
     if(lista.length === 0){
 
       let numeros = $("body").text().match(/\b\d{4}\b/g);
 
       if(numeros && numeros.length >= 10){
 
-        numeros = numeros.map(n => n.trim());
+        numeros = limparNumerosValidos(numeros.map(n => n.trim()));
 
         for(let i = 0; i < numeros.length; i += 5){
 
@@ -228,15 +253,17 @@ async function scraper(url){
       }
     }
 
-    // DEDUP
+    // DEDUP FORTE
     const mapa = new Map();
 
     lista.forEach(i=>{
-      const chave = `${i.horario}-${i.p1}`;
+      const chave = `${i.horario}-${i.p1}-${i.p2}-${i.p3}`;
       if(!mapa.has(chave)){
         mapa.set(chave, i);
       }
     });
+
+    console.log("📊", url, "→", mapa.size, "resultados");
 
     return Array.from(mapa.values());
 
@@ -259,7 +286,7 @@ async function tentarFontes(fontes){
   for(const url of ordenadas){
 
     if((fonteScore[url] || 0) < -5){
-      console.log("🚫 pulando fonte ruim:", url);
+      console.log("🚫 pulando:", url);
       continue;
     }
 
@@ -267,7 +294,6 @@ async function tentarFontes(fontes){
 
     if(dados.length >= 1){
       console.log("✅ fonte OK:", url);
-      aumentarScore(url);
       return dados;
     }
 
@@ -287,23 +313,17 @@ const FONTES = {
     "https://bichodata.com",
     "https://ejogodobicho.com",
     "https://www.resultadodobichohoje.com.br/rio",
-    "https://playbicho.com/resultado-jogo-do-bicho",
-    "https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje",
-    "https://resultadofacil.net/resultados-do-rio-de-hoje"
+    "https://playbicho.com/resultado-jogo-do-bicho"
   ],
   look: [
     "https://bichodata.com",
     "https://playbicho.com/resultado-jogo-do-bicho",
-    "https://ejogodobicho.com",
-    "https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje",
-    "https://resultadofacil.net/look-loterias-de-hoje"
+    "https://ejogodobicho.com"
   ],
   nacional: [
     "https://bichodata.com",
     "https://ejogodobicho.com",
-    "https://playbicho.com/resultado-jogo-do-bicho",
-    "https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje",
-    "https://resultadofacil.net/loteria-nacional-de-hoje"
+    "https://playbicho.com/resultado-jogo-do-bicho"
   ]
 };
 
@@ -423,7 +443,7 @@ async function carregarTudo(){
 
   const agora = Date.now();
 
-  if(cache && (agora - tempo < 30000)){
+  if(cache && (agora - tempo < 120000)){
     return cache;
   }
 
