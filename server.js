@@ -178,18 +178,103 @@ async function scraper(url){
 // 🔁 FALLBACK
 //////////////////////////////////////////////////
 
-async function tentarFontes(fontes){
-  for(const url of fontes){
-    const dados = await scraper(url);
+async function scraper(url){
+  try{
+    const { data } = await axios.get(url, {
+      headers:{ "User-Agent":"Mozilla/5.0" },
+      timeout: 15000
+    });
 
-    if(dados.length >= 1){
-      console.log("✅ fonte OK:", url);
-      return dados;
+    const $ = cheerio.load(data);
+    let lista = [];
+
+    //////////////////////////////////////////
+    // 1️⃣ TABLE (se existir)
+    //////////////////////////////////////////
+    $("table").each((i, tabela)=>{
+
+      let titulo = $(tabela).prevAll("h2,h3,strong").first().text().trim();
+      if(!titulo) titulo = "extra";
+
+      const nums = [];
+
+      $(tabela).find("tr").each((i,tr)=>{
+        const match = $(tr).text().match(/\d{4}/g);
+        if(match) nums.push(...match);
+      });
+
+      if(nums.length >= 5){
+        const item = montarItem(nums, titulo);
+        if(item) lista.push(item);
+      }
+    });
+
+    //////////////////////////////////////////
+    // 2️⃣ DIV (fallback estruturado)
+    //////////////////////////////////////////
+    if(lista.length === 0){
+
+      $("div").each((i, div)=>{
+
+        const texto = $(div).text();
+
+        // pega blocos que tenham pelo menos 5 números
+        const numeros = texto.match(/\d{4}/g);
+
+        if(numeros && numeros.length >= 5){
+
+          // tenta extrair horário próximo
+          const horarioTexto = texto.match(/\d{1,2}:\d{2}|\d{1,2}h/);
+          const horario = limparHorario(horarioTexto?.[0]);
+
+          const item = montarItem(numeros, horario);
+
+          if(item) lista.push(item);
+        }
+      });
     }
 
-    console.log("⚠️ falhou:", url);
+    //////////////////////////////////////////
+    // 3️⃣ TEXTO PURO (fallback agressivo)
+    //////////////////////////////////////////
+    if(lista.length === 0){
+
+      const numeros = $("body").text().match(/\d{4}/g);
+
+      if(numeros && numeros.length >= 10){
+
+        for(let i = 0; i < numeros.length; i += 5){
+
+          const bloco = numeros.slice(i, i+5);
+
+          if(bloco.length === 5){
+
+            const item = montarItem(bloco, "extra");
+
+            if(item) lista.push(item);
+          }
+        }
+      }
+    }
+
+    //////////////////////////////////////////
+    // 🔥 DEDUP INTELIGENTE
+    //////////////////////////////////////////
+    const mapa = new Map();
+
+    lista.forEach(i=>{
+      const chave = i.horario + "-" + i.p1; // mais confiável que só horário
+      if(!mapa.has(chave)){
+        mapa.set(chave, i);
+      }
+    });
+
+    return Array.from(mapa.values());
+
+  }catch(e){
+    console.log("❌ erro scraper:", url);
+    return [];
   }
-  return [];
 }
 
 //////////////////////////////////////////////////
