@@ -271,25 +271,7 @@ async function salvarMongo(dados){
     return;
   }
 
-  const hoje = new Date().toLocaleDateString("en-CA", {
-  timeZone: "America/Sao_Paulo"
-});
-
-if(cache && (agora - tempo < 60000)){
-  // se ainda não tem muitos resultados hoje, força atualização
-  const hojeDados = cache?.historico?.[hoje];
-
-  if(hojeDados){
-    const total = 
-      hojeDados.rio.length +
-      hojeDados.look.length +
-      hojeDados.nacional.length;
-
-    if(total >= 5){
-      return cache;
-    }
-  }
-}
+  const hoje = new Date().toISOString().split("T")[0];
 
   for(const banca in dados){
 
@@ -353,7 +335,7 @@ async function carregarTudo(){
 
   const agora = Date.now();
 
-  if(cache && (agora - tempo < 20000)){
+  if(cache && (agora - tempo < 60000)){
     return cache;
   }
 
@@ -366,9 +348,7 @@ async function carregarTudo(){
   const historico = await pegarHistorico();
 
   cache = {
-    atualizado: new Date().toLocaleString("pt-BR", {
-      timeZone: "America/Sao_Paulo"
-    }),
+    atualizado: new Date().toLocaleString(),
     historico
   };
 
