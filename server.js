@@ -275,6 +275,22 @@ async function salvarMongo(dados){
   timeZone: "America/Sao_Paulo"
 });
 
+if(cache && (agora - tempo < 60000)){
+  // se ainda não tem muitos resultados hoje, força atualização
+  const hojeDados = cache?.historico?.[hoje];
+
+  if(hojeDados){
+    const total = 
+      hojeDados.rio.length +
+      hojeDados.look.length +
+      hojeDados.nacional.length;
+
+    if(total >= 5){
+      return cache;
+    }
+  }
+}
+
   for(const banca in dados){
 
     for(const item of dados[banca]){
@@ -337,7 +353,7 @@ async function carregarTudo(){
 
   const agora = Date.now();
 
-  if(cache && (agora - tempo < 30000)){
+  if(cache && (agora - tempo < 20000)){
     return cache;
   }
 
