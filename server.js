@@ -271,7 +271,9 @@ async function salvarMongo(dados){
     return;
   }
 
-  const hoje = new Date().toISOString().split("T")[0];
+  const hoje = new Date().toLocaleDateString("en-CA", {
+  timeZone: "America/Sao_Paulo"
+});
 
   for(const banca in dados){
 
@@ -335,7 +337,7 @@ async function carregarTudo(){
 
   const agora = Date.now();
 
-  if(cache && (agora - tempo < 60000)){
+  if(cache && (agora - tempo < 30000)){
     return cache;
   }
 
