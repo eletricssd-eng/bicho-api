@@ -64,51 +64,25 @@ function resultadoValido(item){
   if(nums.some(n => !n)) return false;
   if(nums.some(n => !/^\d{4}$/.test(n))) return false;
 
+  // bloqueia lixo óbvio
   if(nums.every(n => n === nums[0])) return false;
 
+  // evita ano tipo 2026 em massa
   const anoCount = nums.filter(n => n.startsWith("20")).length;
   if(anoCount >= 3) return false;
 
   return true;
 }
 
-//////////////////////////////////////////////////
-// 🧠 HORÁRIO
-//////////////////////////////////////////////////
-
 function limparHorario(texto){
   if(!texto) return "extra";
 
-  const match = texto.match(/\d{1,2}:\d{2}|\d{1,2}h/);
-  if(!match) return "extra";
-
-  let h = match[0].replace("h", ":00");
-
-  const [hora, min] = h.split(":");
-  return `${hora.padStart(2,"0")}:${min}`;
+  const match = texto.match(/\d{2}:\d{2}|\d{2}h/);
+  return match ? match[0].replace("h", ":00") : "extra";
 }
 
 //////////////////////////////////////////////////
-// 🔧 MONTA ITEM
-//////////////////////////////////////////////////
-
-function montarItem(nums, origem){
-  if(!nums || nums.length < 5) return null;
-
-  const item = {
-    horario: limparHorario(origem),
-    p1: nums[0],
-    p2: nums[1],
-    p3: nums[2],
-    p4: nums[3],
-    p5: nums[4]
-  };
-
-  return resultadoValido(item) ? item : null;
-}
-
-//////////////////////////////////////////////////
-// 🔍 SCRAPER MULTI-ESTRUTURA
+// 🔍 SCRAPER
 //////////////////////////////////////////////////
 
 async function scraper(url){
@@ -118,14 +92,9 @@ async function scraper(url){
       timeout: 15000
     });
 
-    if(!data) return [];
-
     const $ = cheerio.load(data);
     let lista = [];
 
-    //////////////////////////////////////////
-    // 1️⃣ TABLE
-    //////////////////////////////////////////
     $("table").each((i, tabela)=>{
 
       let titulo = $(tabela).prevAll("h2,h3,strong").first().text().trim();
@@ -139,70 +108,48 @@ async function scraper(url){
       });
 
       if(nums.length >= 5){
-        const item = montarItem(nums, titulo);
-        if(item) lista.push(item);
+
+        const item = {
+          horario: limparHorario(titulo),
+          p1: nums[0],
+          p2: nums[1],
+          p3: nums[2],
+          p4: nums[3],
+          p5: nums[4]
+        };
+
+        if(resultadoValido(item)){
+          lista.push(item);
+        }
       }
     });
 
-    //////////////////////////////////////////
-    // 2️⃣ DIV (fallback)
-    //////////////////////////////////////////
-    if(lista.length < 3){
-
-      $("div").each((i, div)=>{
-
-        const texto = $(div).text();
-
-        // evita div gigante (ruído)
-        if(texto.length > 500) return;
-
-        const numeros = texto.match(/\d{4}/g);
-
-        if(numeros && numeros.length >= 5){
-
-          const horarioTexto = texto.match(/\d{1,2}:\d{2}|\d{1,2}h/);
-          const origem = horarioTexto?.[0] || "extra";
-
-          const item = montarItem(numeros, origem);
-
-          if(item) lista.push(item);
-        }
-      });
-    }
-
-    //////////////////////////////////////////
-    // 3️⃣ TEXTO PURO (último recurso)
-    //////////////////////////////////////////
-    if(lista.length < 2){
+    // fallback mais restrito
+    if(lista.length === 0){
 
       const numeros = $("body").text().match(/\d{4}/g);
 
       if(numeros && numeros.length >= 10){
 
-        for(let i = 0; i < numeros.length; i += 5){
+        const item = {
+          horario: "extra",
+          p1: numeros[0],
+          p2: numeros[1],
+          p3: numeros[2],
+          p4: numeros[3],
+          p5: numeros[4]
+        };
 
-          const bloco = numeros.slice(i, i+5);
-
-          if(bloco.length === 5){
-
-            const item = montarItem(bloco, "extra");
-
-            if(item) lista.push(item);
-          }
+        if(resultadoValido(item)){
+          lista.push(item);
         }
       }
     }
 
-    //////////////////////////////////////////
-    // 🔥 DEDUP FORTE
-    //////////////////////////////////////////
+    // remove duplicados
     const mapa = new Map();
-
-    lista.forEach(i=>{
-      const chave = `${i.horario}-${i.p1}-${i.p2}-${i.p3}`;
-      if(!mapa.has(chave)){
-        mapa.set(chave, i);
-      }
+    lista.forEach(i => {
+      mapa.set(i.horario + i.p1, i);
     });
 
     return Array.from(mapa.values());
@@ -252,7 +199,7 @@ const FONTES = {
 };
 
 //////////////////////////////////////////////////
-// 🏦 FEDERAL
+// 🏦 FEDERAL (FIX)
 //////////////////////////////////////////////////
 
 async function pegarFederal(){
@@ -277,8 +224,8 @@ async function pegarFederal(){
 
     return resultadoValido(item) ? [item] : [];
 
-  }catch{
-    console.log("❌ federal falhou");
+  }catch(e){
+    console.log("❌ federal falhou (sem fallback)");
     return [];
   }
 }
@@ -288,6 +235,7 @@ async function pegarFederal(){
 //////////////////////////////////////////////////
 
 async function pegarTudo(){
+
   const [rio, look, nacional, federal] = await Promise.all([
     tentarFontes(FONTES.rio),
     tentarFontes(FONTES.look),
@@ -312,16 +260,19 @@ async function salvarMongo(dados){
   const hoje = new Date().toISOString().split("T")[0];
 
   for(const banca in dados){
+
     for(const item of dados[banca]){
 
-      const uniqueId = `${hoje}-${banca}-${item.horario}`;
-
       try{
+
+        const uniqueId = `${hoje}-${banca}-${item.horario}-${item.p1}`;
+
         await Resultado.findOneAndUpdate(
           { uniqueId },
           { ...item, data: hoje, banca, uniqueId },
           { upsert: true }
         );
+
       }catch(e){
         console.log("❌ erro salvar:", e.message);
       }
@@ -349,12 +300,6 @@ async function pegarHistorico(){
     historico[r.data][r.banca].push(r);
   });
 
-  for(const data in historico){
-    for(const banca in historico[data]){
-      historico[data][banca].sort((a,b)=> a.horario.localeCompare(b.horario));
-    }
-  }
-
   return historico;
 }
 
@@ -369,7 +314,7 @@ async function carregarTudo(){
 
   const agora = Date.now();
 
-  if(cache && (agora - tempo < 20000)){
+  if(cache && (agora - tempo < 60000)){
     return cache;
   }
 
@@ -382,7 +327,7 @@ async function carregarTudo(){
   const historico = await pegarHistorico();
 
   cache = {
-    atualizado: new Date().toLocaleString("pt-BR"),
+    atualizado: new Date().toLocaleString(),
     historico
   };
 
