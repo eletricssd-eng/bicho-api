@@ -104,90 +104,6 @@ async function scraper(url){
     const $ = cheerio.load(data);
     let lista = [];
 
-    $("table").each((i, tabela)=>{
-
-      let titulo = $(tabela).prevAll("h2,h3,strong").first().text().trim();
-      if(!titulo) titulo = "extra";
-
-      const nums = [];
-
-      $(tabela).find("tr").each((i,tr)=>{
-        const match = $(tr).text().match(/\d{4}/g);
-        if(match) nums.push(...match);
-      });
-
-      if(nums.length >= 5){
-
-        const item = {
-          horario: limparHorario(titulo),
-          p1: nums[0],
-          p2: nums[1],
-          p3: nums[2],
-          p4: nums[3],
-          p5: nums[4]
-        };
-
-        if(resultadoValido(item)){
-          lista.push(item);
-        }
-      }
-    });
-
-    // fallback
-    if(lista.length === 0){
-
-      const numeros = $("body").text().match(/\d{4}/g);
-
-      if(numeros && numeros.length >= 10){
-
-        const item = {
-          horario: "extra",
-          p1: numeros[0],
-          p2: numeros[1],
-          p3: numeros[2],
-          p4: numeros[3],
-          p5: numeros[4]
-        };
-
-        if(resultadoValido(item)){
-          lista.push(item);
-        }
-      }
-    }
-
-    // 🔥 REMOVE DUPLICADOS MELHOR
-    const mapa = new Map();
-
-    lista.forEach(i=>{
-      const chave = i.horario;
-
-      if(!mapa.has(chave)){
-        mapa.set(chave, i);
-      }
-    });
-
-    return Array.from(mapa.values());
-
-  }catch(e){
-    console.log("❌ erro scraper:", url);
-    return [];
-  }
-}
-
-//////////////////////////////////////////////////
-// 🔁 FALLBACK
-//////////////////////////////////////////////////
-
-async function scraper(url){
-  try{
-    const { data } = await axios.get(url, {
-      headers:{ "User-Agent":"Mozilla/5.0" },
-      timeout: 15000
-    });
-
-    const $ = cheerio.load(data);
-    let lista = [];
-
     //////////////////////////////////////////
     // 1️⃣ TABLE (se existir)
     //////////////////////////////////////////
@@ -275,6 +191,24 @@ async function scraper(url){
     console.log("❌ erro scraper:", url);
     return [];
   }
+}
+
+//////////////////////////////////////////////////
+// 🔁 FALLBACK
+//////////////////////////////////////////////////
+
+async function tentarFontes(fontes){
+  for(const url of fontes){
+    const dados = await scraper(url);
+
+    if(dados.length >= 1){
+      console.log("✅ fonte OK:", url);
+      return dados;
+    }
+
+    console.log("⚠️ falhou:", url);
+  }
+  return [];
 }
 
 //////////////////////////////////////////////////
