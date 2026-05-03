@@ -15,52 +15,60 @@ const PORT = process.env.PORT || 3000;
 // 🔥 CONFIG
 //////////////////////////////////////////////////
 
+let browser;
+
+async function iniciarBrowser(){
+  browser = await puppeteer.launch({
+    headless: "new",
+    args: ["--no-sandbox", "--disable-setuid-sandbox"]
+  });
+}
+
+iniciarBrowser();
+
 const USER_AGENTS = [
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-  "Mozilla/5.0 (Linux; Android 10)",
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)"
+  "Mozilla/5.0 (Linux; Android 10)"
 ];
-
-//////////////////////////////////////////////////
-// 🧠 UTIL
-//////////////////////////////////////////////////
 
 const delay = ms => new Promise(r => setTimeout(r, ms));
 
 //////////////////////////////////////////////////
-// 🚀 FETCH RENDERIZADO (PUPPETEER)
+// 🚀 FETCH RENDERIZADO OTIMIZADO
 //////////////////////////////////////////////////
 
 async function fetchRenderizado(url){
 
-  const browser = await puppeteer.launch({
-    headless: "new",
-    args: ["--no-sandbox", "--disable-setuid-sandbox"]
-  });
-
   const page = await browser.newPage();
 
-  await page.setUserAgent(
-    USER_AGENTS[Math.random()*USER_AGENTS.length | 0]
-  );
+  try{
 
-  await page.goto(url, {
-    waitUntil: "networkidle2",
-    timeout: 30000
-  });
+    await page.setUserAgent(
+      USER_AGENTS[Math.random()*USER_AGENTS.length | 0]
+    );
 
-  await delay(3000);
+    await page.goto(url, {
+      waitUntil: "domcontentloaded",
+      timeout: 20000
+    });
 
-  const html = await page.content();
+    await delay(2000);
 
-  await browser.close();
+    const html = await page.content();
 
-  return html;
+    await page.close();
+
+    return html;
+
+  }catch(e){
+    await page.close();
+    return null;
+  }
 }
 
 //////////////////////////////////////////////////
-// 🧠 FILTRO FORTE
+// 🧠 FILTRO PROFISSIONAL (ANTI-LIXO REAL)
 //////////////////////////////////////////////////
 
 function limparNumeros(nums){
@@ -73,7 +81,7 @@ function limparNumeros(nums){
 
     if(num < 1000 || num > 9999) return false;
 
-    // lixo comum
+    // lixo clássico
     if([
       "0000","1111","2222","3333","4444",
       "5555","6666","7777","8888","9999",
@@ -109,18 +117,18 @@ function extrairHorario(texto){
 
 async function scraper(url){
 
+  const html = await fetchRenderizado(url);
+
+  if(!html) return [];
+
   try{
-
-    const html = await fetchRenderizado(url);
-
-    if(!html) return [];
 
     const $ = cheerio.load(html);
     let resultados = [];
 
     $("table").each((i, tabela)=>{
 
-      let titulo = $(tabela).prevAll("h2,h3,strong").first().text();
+      const titulo = $(tabela).prevAll("h2,h3,strong").first().text();
 
       let nums = [];
 
@@ -137,63 +145,69 @@ async function scraper(url){
 
         if(!horario) return;
 
-        resultados.push({
+        const item = {
           horario,
           p1: nums[0],
           p2: nums[1],
           p3: nums[2],
           p4: nums[3],
           p5: nums[4]
-        });
+        };
+
+        resultados.push(item);
       }
     });
 
-    console.log("📊", url, resultados.length);
-
     return resultados;
 
-  }catch(e){
-    console.log("❌ erro scraper:", url);
+  }catch{
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🔁 MULTI-FONTE
+// 🔁 MULTI-FONTE INTELIGENTE
 //////////////////////////////////////////////////
 
 async function buscarResultados(fontes){
 
   const promessas = fontes.map(url => scraper(url));
-  const resultados = await Promise.all(promessas);
+  const respostas = await Promise.all(promessas);
 
-  let todos = resultados.flat();
+  let todos = respostas.flat();
 
-  // só válidos
+  // remove inválidos
   todos = todos.filter(r => r && r.horario);
 
-  // dedup
+  // dedup forte
   const mapa = new Map();
 
   todos.forEach(r=>{
-    const chave = `${r.horario}-${r.p1}-${r.p2}`;
+    const chave = `${r.horario}-${r.p1}-${r.p2}-${r.p3}`;
     if(!mapa.has(chave)){
       mapa.set(chave, r);
     }
   });
 
-  return Array.from(mapa.values()).slice(0, 15);
+  let finais = Array.from(mapa.values());
+
+  // ordena por horário
+  finais.sort((a,b)=> a.horario.localeCompare(b.horario));
+
+  // 🚨 LIMITE (ESSENCIAL)
+  return finais.slice(0, 10);
 }
 
 //////////////////////////////////////////////////
-// 🌐 FONTES
+// 🌐 FONTES (AJUSTADAS)
 //////////////////////////////////////////////////
 
 const FONTES = [
+  "https://ejogodobicho.com/resultados-rio-pt",
+  "https://ejogodobicho.com/resultados-look-goias",
+  "https://ejogodobicho.com/resultados-loteria-nacional-ln",
   "https://bichodata.com",
-  "https://ejogodobicho.com",
-  "https://playbicho.com/resultado-jogo-do-bicho",
-  "https://www.resultadodobichohoje.com.br/rio"
+  "https://playbicho.com/resultado-jogo-do-bicho"
 ];
 
 //////////////////////////////////////////////////
