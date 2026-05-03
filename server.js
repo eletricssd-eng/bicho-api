@@ -3,7 +3,7 @@ import axios from "axios";
 import cors from "cors";
 import * as cheerio from "cheerio";
 import mongoose from "mongoose";
-import https from "https";
+import puppeteer from "puppeteer";
 
 const app = express();
 app.use(cors());
@@ -15,8 +15,6 @@ const PORT = process.env.PORT || 3000;
 // 🔥 CONFIG
 //////////////////////////////////////////////////
 
-const httpsAgent = new https.Agent({ rejectUnauthorized: false });
-
 const USER_AGENTS = [
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
@@ -24,65 +22,41 @@ const USER_AGENTS = [
   "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)"
 ];
 
-const fonteScore = {};
-const fonteFail = {};
-
 //////////////////////////////////////////////////
 // 🧠 UTIL
 //////////////////////////////////////////////////
 
 const delay = ms => new Promise(r => setTimeout(r, ms));
 
-function scoreUp(url){
-  fonteScore[url] = (fonteScore[url] || 0) + 2;
-  fonteFail[url] = 0;
-}
-
-function scoreDown(url){
-  fonteScore[url] = (fonteScore[url] || 0) - 3;
-  fonteFail[url] = (fonteFail[url] || 0) + 1;
-}
-
-function fonteBloqueada(url){
-  return (fonteFail[url] || 0) >= 5;
-}
-
 //////////////////////////////////////////////////
-// 🌐 FETCH
+// 🚀 FETCH RENDERIZADO (PUPPETEER)
 //////////////////////////////////////////////////
 
-async function fetchHTML(url, tentativas = 3){
+async function fetchRenderizado(url){
 
-  for(let i = 0; i < tentativas; i++){
+  const browser = await puppeteer.launch({
+    headless: "new",
+    args: ["--no-sandbox", "--disable-setuid-sandbox"]
+  });
 
-    try{
-      const res = await axios.get(url, {
-        timeout: 15000,
-        httpsAgent,
-        headers: {
-          "User-Agent": USER_AGENTS[Math.random()*USER_AGENTS.length | 0],
-          "Accept": "text/html"
-        },
-        validateStatus: () => true
-      });
+  const page = await browser.newPage();
 
-      if(res.status >= 200 && res.status < 300){
-        scoreUp(url);
-        return res.data;
-      }
+  await page.setUserAgent(
+    USER_AGENTS[Math.random()*USER_AGENTS.length | 0]
+  );
 
-      if(res.status >= 500){
-        scoreDown(url);
-        await delay(1500 * (i+1));
-      }
+  await page.goto(url, {
+    waitUntil: "networkidle2",
+    timeout: 30000
+  });
 
-    }catch{
-      scoreDown(url);
-      await delay(1500 * (i+1));
-    }
-  }
+  await delay(3000);
 
-  return null;
+  const html = await page.content();
+
+  await browser.close();
+
+  return html;
 }
 
 //////////////////////////////////////////////////
@@ -135,15 +109,11 @@ function extrairHorario(texto){
 
 async function scraper(url){
 
-  if(fonteBloqueada(url)){
-    console.log("🚫 BLOQUEADA:", url);
-    return [];
-  }
-
-  const html = await fetchHTML(url);
-  if(!html) return [];
-
   try{
+
+    const html = await fetchRenderizado(url);
+
+    if(!html) return [];
 
     const $ = cheerio.load(html);
     let resultados = [];
@@ -182,13 +152,14 @@ async function scraper(url){
 
     return resultados;
 
-  }catch{
+  }catch(e){
+    console.log("❌ erro scraper:", url);
     return [];
   }
 }
 
 //////////////////////////////////////////////////
-// 🔁 MULTI-FONTE INTELIGENTE
+// 🔁 MULTI-FONTE
 //////////////////////////////////////////////////
 
 async function buscarResultados(fontes){
@@ -198,10 +169,10 @@ async function buscarResultados(fontes){
 
   let todos = resultados.flat();
 
-  // mantém só com horário válido
+  // só válidos
   todos = todos.filter(r => r && r.horario);
 
-  // dedup forte
+  // dedup
   const mapa = new Map();
 
   todos.forEach(r=>{
