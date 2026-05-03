@@ -3,7 +3,6 @@ import axios from "axios";
 import cors from "cors";
 import * as cheerio from "cheerio";
 import mongoose from "mongoose";
-import puppeteer from "puppeteer";
 
 const app = express();
 app.use(cors());
@@ -15,60 +14,75 @@ const PORT = process.env.PORT || 3000;
 // 🔥 CONFIG
 //////////////////////////////////////////////////
 
-let browser;
-
-async function iniciarBrowser(){
-  browser = await puppeteer.launch({
-    headless: "new",
-    args: ["--no-sandbox", "--disable-setuid-sandbox"]
-  });
-}
-
-iniciarBrowser();
-
 const USER_AGENTS = [
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-  "Mozilla/5.0 (Linux; Android 10)"
+  "Mozilla/5.0 (Linux; Android 10)",
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)"
 ];
+
+const fonteScore = {};
+const fonteFail = {};
 
 const delay = ms => new Promise(r => setTimeout(r, ms));
 
 //////////////////////////////////////////////////
-// 🚀 FETCH RENDERIZADO OTIMIZADO
+// 🧠 SCORE INTELIGENTE
 //////////////////////////////////////////////////
 
-async function fetchRenderizado(url){
+function scoreUp(url){
+  fonteScore[url] = (fonteScore[url] || 0) + 2;
+  fonteFail[url] = 0;
+}
 
-  const page = await browser.newPage();
+function scoreDown(url){
+  fonteScore[url] = (fonteScore[url] || 0) - 2;
+  fonteFail[url] = (fonteFail[url] || 0) + 1;
+}
 
-  try{
-
-    await page.setUserAgent(
-      USER_AGENTS[Math.random()*USER_AGENTS.length | 0]
-    );
-
-    await page.goto(url, {
-      waitUntil: "domcontentloaded",
-      timeout: 20000
-    });
-
-    await delay(2000);
-
-    const html = await page.content();
-
-    await page.close();
-
-    return html;
-
-  }catch(e){
-    await page.close();
-    return null;
-  }
+function bloqueada(url){
+  return (fonteFail[url] || 0) >= 5;
 }
 
 //////////////////////////////////////////////////
-// 🧠 FILTRO PROFISSIONAL (ANTI-LIXO REAL)
+// 🚀 FETCH COM RETRY
+//////////////////////////////////////////////////
+
+async function fetchHTML(url, tentativas = 3){
+
+  if(bloqueada(url)) return null;
+
+  for(let i = 0; i < tentativas; i++){
+
+    try{
+      const res = await axios.get(url, {
+        timeout: 15000,
+        headers: {
+          "User-Agent": USER_AGENTS[Math.random()*USER_AGENTS.length | 0],
+          "Accept": "text/html"
+        },
+        validateStatus: () => true
+      });
+
+      if(res.status >= 200 && res.status < 300){
+        scoreUp(url);
+        return res.data;
+      }
+
+      scoreDown(url);
+      await delay(1000 * (i+1));
+
+    }catch{
+      scoreDown(url);
+      await delay(1000 * (i+1));
+    }
+  }
+
+  return null;
+}
+
+//////////////////////////////////////////////////
+// 🧠 FILTRO ANTI-LIXO
 //////////////////////////////////////////////////
 
 function limparNumeros(nums){
@@ -81,7 +95,6 @@ function limparNumeros(nums){
 
     if(num < 1000 || num > 9999) return false;
 
-    // lixo clássico
     if([
       "0000","1111","2222","3333","4444",
       "5555","6666","7777","8888","9999",
@@ -117,14 +130,20 @@ function extrairHorario(texto){
 
 async function scraper(url){
 
-  const html = await fetchRenderizado(url);
+  const html = await fetchHTML(url);
 
-  if(!html) return [];
+  if(!html || typeof html !== "string") return [];
 
   try{
 
     const $ = cheerio.load(html);
     let resultados = [];
+
+    // 🚨 proteção contra página lixo
+    const texto = $("body").text();
+    if(!/resultado|extração|prêmio/i.test(texto)){
+      return [];
+    }
 
     $("table").each((i, tabela)=>{
 
@@ -142,19 +161,16 @@ async function scraper(url){
       if(nums.length >= 5){
 
         const horario = extrairHorario(titulo);
-
         if(!horario) return;
 
-        const item = {
+        resultados.push({
           horario,
           p1: nums[0],
           p2: nums[1],
           p3: nums[2],
           p4: nums[3],
           p5: nums[4]
-        };
-
-        resultados.push(item);
+        });
       }
     });
 
@@ -166,17 +182,21 @@ async function scraper(url){
 }
 
 //////////////////////////////////////////////////
-// 🔁 MULTI-FONTE INTELIGENTE
+// 🔁 MULTI-FONTE
 //////////////////////////////////////////////////
 
 async function buscarResultados(fontes){
 
-  const promessas = fontes.map(url => scraper(url));
+  const ordenadas = [...fontes].sort((a,b)=>{
+    return (fonteScore[b] || 0) - (fonteScore[a] || 0);
+  });
+
+  const promessas = ordenadas.map(url => scraper(url));
   const respostas = await Promise.all(promessas);
 
   let todos = respostas.flat();
 
-  // remove inválidos
+  // só válidos
   todos = todos.filter(r => r && r.horario);
 
   // dedup forte
@@ -191,15 +211,15 @@ async function buscarResultados(fontes){
 
   let finais = Array.from(mapa.values());
 
-  // ordena por horário
+  // ordena
   finais.sort((a,b)=> a.horario.localeCompare(b.horario));
 
-  // 🚨 LIMITE (ESSENCIAL)
+  // limite
   return finais.slice(0, 10);
 }
 
 //////////////////////////////////////////////////
-// 🌐 FONTES (AJUSTADAS)
+// 🌐 FONTES
 //////////////////////////////////////////////////
 
 const FONTES = [
