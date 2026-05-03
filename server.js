@@ -3,6 +3,7 @@ import axios from "axios";
 import cors from "cors";
 import * as cheerio from "cheerio";
 import mongoose from "mongoose";
+import puppeteer from "puppeteer";
 import https from "https";
 
 const app = express();
@@ -12,61 +13,23 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 //////////////////////////////////////////////////
-// 🔥 ANTI-BLOQUEIO
+// 🔥 CONFIG
 //////////////////////////////////////////////////
 
-const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+const httpsAgent = new https.Agent({ rejectUnauthorized:false });
 
 const USER_AGENTS = [
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-  "Mozilla/5.0 (Linux; Android 10)",
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)"
+  "Mozilla/5.0 (Linux; Android 10)"
 ];
 
-const fonteScore = {};
-
-const delay = ms => new Promise(r => setTimeout(r, ms));
-
-function aumentarScore(url){
-  fonteScore[url] = (fonteScore[url] || 0) + 1;
-}
-
-function diminuirScore(url){
-  fonteScore[url] = (fonteScore[url] || 0) - 2;
-}
-
-//////////////////////////////////////////////////
-// 🔥 FETCH COM RETRY
-//////////////////////////////////////////////////
-
-async function fetchComRetry(url, tentativas = 3){
-  for(let i = 0; i < tentativas; i++){
-    try{
-      const res = await axios.get(url, {
-        timeout: 15000,
-        httpsAgent,
-        headers:{
-          "User-Agent": USER_AGENTS[Math.floor(Math.random()*USER_AGENTS.length)]
-        },
-        validateStatus: () => true
-      });
-
-      if(res.status >= 200 && res.status < 300){
-        aumentarScore(url);
-        return res.data;
-      }
-
-      diminuirScore(url);
-      await delay(1000 * (i+1));
-
-    }catch{
-      diminuirScore(url);
-      await delay(1000 * (i+1));
-    }
-  }
-  return null;
-}
+const FONTES = [
+  "https://ejogodobicho.com/resultados-rio-pt",
+  "https://ejogodobicho.com/resultados-look-goias",
+  "https://ejogodobicho.com/resultados-loteria-nacional-ln",
+  "https://www.resultadodobichohoje.com.br/rio"
+];
 
 //////////////////////////////////////////////////
 // 🔥 MONGO
@@ -75,7 +38,7 @@ async function fetchComRetry(url, tentativas = 3){
 await mongoose.connect(process.env.MONGO_URL);
 
 const Resultado = mongoose.model("Resultado", new mongoose.Schema({
-  uniqueId: { type:String, unique:true },
+  uniqueId:{ type:String, unique:true },
   data:String,
   banca:String,
   horario:String,
@@ -83,8 +46,10 @@ const Resultado = mongoose.model("Resultado", new mongoose.Schema({
 }));
 
 //////////////////////////////////////////////////
-// 🧠 FILTRO
+// 🧠 UTIL
 //////////////////////////////////////////////////
+
+const delay = ms => new Promise(r=>setTimeout(r,ms));
 
 function limparNumeros(nums){
   return nums.filter(n=>{
@@ -96,166 +61,160 @@ function limparNumeros(nums){
   });
 }
 
-function limparHorario(txt){
-  if(!txt) return null;
-  const m = txt.match(/\d{1,2}:\d{2}|\d{1,2}h/);
-  if(!m) return null;
-  let h = m[0].replace("h",":00");
-  let [hh,mm] = h.split(":");
-  return `${hh.padStart(2,"0")}:${mm}`;
-}
-
-function resultadoValido(i){
-  if(!i) return false;
-  const nums = [i.p1,i.p2,i.p3,i.p4,i.p5];
-  if(nums.some(n=>!n)) return false;
-  if(nums.some(n=>!/^\d{4}$/.test(n))) return false;
-  if(nums.every(n=>n===nums[0])) return false;
-  return true;
+function validarBloco(b){
+  if(b.length !== 5) return false;
+  const uniq = new Set(b).size;
+  return uniq >= 3;
 }
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER
+// ⚡ AXIOS SCRAPER
 //////////////////////////////////////////////////
 
-async function scraper(url){
+async function scraperAxios(url){
 
-  const html = await fetchComRetry(url);
-  if(!html) return [];
-
-  const $ = cheerio.load(html);
-  let lista = [];
-
-  if(!/resultado|extração|prêmio/i.test($("body").text())){
-    return [];
-  }
-
-  $("table").each((i,tb)=>{
-
-    let titulo = $(tb).prevAll("h2,h3,strong").first().text().trim();
-
-    let nums = [];
-
-    $(tb).find("tr").each((i,tr)=>{
-      const m = $(tr).text().match(/\b\d{4}\b/g);
-      if(m) nums.push(...m);
+  try{
+    const res = await axios.get(url,{
+      timeout:10000,
+      httpsAgent,
+      headers:{
+        "User-Agent": USER_AGENTS[Math.random()*USER_AGENTS.length|0]
+      }
     });
 
-    nums = limparNumeros(nums.map(n=>n.trim()));
+    const $ = cheerio.load(res.data);
 
-    const horario = limparHorario(titulo);
+    let nums = $("body").text().match(/\b\d{4}\b/g) || [];
+    nums = limparNumeros(nums);
 
-    if(nums.length >= 5 && horario){
+    let lista = [];
 
-      const item = {
-        horario,
-        p1:nums[0],p2:nums[1],p3:nums[2],p4:nums[3],p5:nums[4]
-      };
-
-      if(resultadoValido(item)){
-        lista.push(item);
+    for(let i=0;i<nums.length;i+=5){
+      const bloco = nums.slice(i,i+5);
+      if(validarBloco(bloco)){
+        lista.push({
+          horario:"auto",
+          p1:bloco[0],p2:bloco[1],p3:bloco[2],p4:bloco[3],p5:bloco[4]
+        });
       }
     }
-  });
 
-  // 🚫 SEM FALLBACK LIXO
+    return lista;
 
-  const mapa = new Map();
-
-  lista.forEach(i=>{
-    const key = `${i.horario}-${i.p1}-${i.p2}-${i.p3}`;
-    if(!mapa.has(key)) mapa.set(key,i);
-  });
-
-  return Array.from(mapa.values());
+  }catch{
+    return [];
+  }
 }
 
 //////////////////////////////////////////////////
-// 🔁 TODAS AS FONTES
+// 🔥 PUPPETEER SCRAPER
 //////////////////////////////////////////////////
 
-const TODAS_FONTES = [
-  "https://bichodata.com",
-  "https://ejogodobicho.com",
-  "https://playbicho.com/resultado-jogo-do-bicho",
-  "https://www.resultadodobichohoje.com.br/rio",
-  "https://resultadofacil.net",
-  "https://www.resultadofacil.com.br"
-];
+async function scraperPuppeteer(url){
+
+  const browser = await puppeteer.launch({
+    headless:true,
+    args:["--no-sandbox"]
+  });
+
+  try{
+
+    const page = await browser.newPage();
+
+    await page.setUserAgent(USER_AGENTS[0]);
+
+    await page.goto(url,{ waitUntil:"networkidle2", timeout:20000 });
+
+    const content = await page.content();
+
+    const $ = cheerio.load(content);
+
+    let nums = $("body").text().match(/\b\d{4}\b/g) || [];
+    nums = limparNumeros(nums);
+
+    let lista = [];
+
+    for(let i=0;i<nums.length;i+=5){
+      const bloco = nums.slice(i,i+5);
+      if(validarBloco(bloco)){
+        lista.push({
+          horario:"auto",
+          p1:bloco[0],p2:bloco[1],p3:bloco[2],p4:bloco[3],p5:bloco[4]
+        });
+      }
+    }
+
+    return lista;
+
+  }catch{
+    return [];
+  }finally{
+    await browser.close();
+  }
+}
 
 //////////////////////////////////////////////////
-// 🔥 MULTI SCRAPER
+// 🚀 SCRAPER DEFINITIVO
 //////////////////////////////////////////////////
 
 async function pegarResultados(){
 
-  const ordenadas = [...TODAS_FONTES].sort((a,b)=>
-    (fonteScore[b]||0)-(fonteScore[a]||0)
-  );
-
   let resultados = [];
 
-  for(const url of ordenadas){
+  for(const url of FONTES){
 
-    if((fonteScore[url]||0) < -5) continue;
+    console.log("🔎 tentando:", url);
 
-    const dados = await scraper(url);
+    let dados = await scraperAxios(url);
 
     if(dados.length){
-      console.log("✅", url, dados.length);
+      console.log("⚡ axios OK:", dados.length);
+      resultados.push(...dados);
+      continue;
+    }
+
+    console.log("🐢 fallback puppeteer...");
+
+    dados = await scraperPuppeteer(url);
+
+    if(dados.length){
+      console.log("🔥 puppeteer OK:", dados.length);
       resultados.push(...dados);
     }else{
-      console.log("❌", url);
-      diminuirScore(url);
+      console.log("❌ falhou total");
     }
+
+    await delay(1000);
   }
 
-  // dedup geral
+  // dedup
   const mapa = new Map();
 
   resultados.forEach(i=>{
-    const key = `${i.horario}-${i.p1}-${i.p2}`;
+    const key = `${i.p1}-${i.p2}-${i.p3}`;
     if(!mapa.has(key)) mapa.set(key,i);
   });
 
   return Array.from(mapa.values());
-}
-
-//////////////////////////////////////////////////
-// 🚀 PIPELINE
-//////////////////////////////////////////////////
-
-async function pegarTudo(){
-
-  const base = await pegarResultados();
-
-  return {
-    rio: base,
-    look: base,
-    nacional: base,
-    federal: []
-  };
 }
 
 //////////////////////////////////////////////////
 // 💾 SALVAR
 //////////////////////////////////////////////////
 
-async function salvarMongo(dados){
+async function salvar(dados){
 
   const hoje = new Date().toISOString().split("T")[0];
 
-  for(const banca in dados){
-    for(const item of dados[banca]){
+  for(const item of dados){
 
-      const uniqueId = `${hoje}-${banca}-${item.horario}`;
+    const uniqueId = `${hoje}-${item.p1}-${item.p2}`;
 
-      await Resultado.findOneAndUpdate(
-        { uniqueId },
-        { ...item, data:hoje, banca, uniqueId },
-        { upsert:true }
-      );
-    }
+    await Resultado.findOneAndUpdate(
+      { uniqueId },
+      { ...item, data:hoje, banca:"geral", uniqueId },
+      { upsert:true }
+    );
   }
 }
 
@@ -266,11 +225,12 @@ async function salvarMongo(dados){
 async function historico(){
 
   const dados = await Resultado.find().lean();
+
   const h = {};
 
   dados.forEach(r=>{
-    if(!h[r.data]) h[r.data]={rio:[],look:[],nacional:[],federal:[]};
-    h[r.data][r.banca].push(r);
+    if(!h[r.data]) h[r.data]={geral:[]};
+    h[r.data].geral.push(r);
   });
 
   return h;
@@ -286,14 +246,14 @@ async function carregar(){
 
   if(cache && Date.now()-tempo < 60000) return cache;
 
-  console.log("🔄 ATUALIZANDO...");
+  console.log("🔄 ATUALIZANDO DEFINITIVO...");
 
-  const dados = await pegarTudo();
+  const dados = await pegarResultados();
 
-  await salvarMongo(dados);
+  await salvar(dados);
 
   cache = {
-    atualizado: new Date().toLocaleString("pt-BR"),
+    atualizado:new Date().toLocaleString("pt-BR"),
     historico: await historico()
   };
 
@@ -306,7 +266,7 @@ async function carregar(){
 // 🌐 ROTAS
 //////////////////////////////////////////////////
 
-app.get("/",(req,res)=>res.send("OK"));
+app.get("/",(req,res)=>res.send("SCRAPER DEFINITIVO ON"));
 
 app.get("/resultados", async (req,res)=>{
   res.json(await carregar());
@@ -316,4 +276,4 @@ app.get("/resultados", async (req,res)=>{
 // 🚀 START
 //////////////////////////////////////////////////
 
-app.listen(PORT, ()=>console.log("🚀 rodando", PORT));
+app.listen(PORT,()=>console.log("🔥 DEFINITIVO rodando", PORT));
