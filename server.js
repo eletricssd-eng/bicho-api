@@ -14,8 +14,6 @@ const PORT = process.env.PORT || 3000;
 // 🔧 CONFIG
 //////////////////////////////////////////////////
 
-const BASE_URL = "https://www.resultadofacil.com.br";
-
 const APIS = {
   rio: "https://www.resultadofacil.com.br/api/resultado/pt-rio",
   look: "https://www.resultadofacil.com.br/api/resultado/look",
@@ -44,7 +42,7 @@ async function fetchAPI(url){
 
 async function fetchHTML(url){
   try{
-    const res = await axios.get(url);
+    const res = await axios.get(url, { timeout: 15000 });
     return res.data;
   }catch{
     return null;
@@ -52,18 +50,33 @@ async function fetchHTML(url){
 }
 
 //////////////////////////////////////////////////
-// 🧠 NORMALIZAÇÃO
+// 🧠 FUNÇÕES AUXILIARES
 //////////////////////////////////////////////////
 
 function extrairHorario(texto){
-  const m = texto?.match(/\d{1,2}:\d{2}/);
-  return m ? m[0] : "00:00";
+  if(!texto) return null;
+
+  const match = texto.match(/\d{1,2}:\d{2}|\d{1,2}h/);
+  if(!match) return null;
+
+  let h = match[0].replace("h", ":00");
+
+  const [hora, min] = h.split(":");
+
+  return `${hora.padStart(2,"0")}:${min}`;
 }
 
 function resultadoValido(r){
+  if(!r) return false;
+
   const nums = [r.p1,r.p2,r.p3,r.p4,r.p5];
+
   return nums.every(n => /^\d{4}$/.test(n));
 }
+
+//////////////////////////////////////////////////
+// 🧠 NORMALIZAÇÃO API
+//////////////////////////////////////////////////
 
 function normalizarAPI(data){
 
@@ -74,21 +87,34 @@ function normalizarAPI(data){
   if(Array.isArray(data)) lista = data;
   else if(data.listaResultado) lista = data.listaResultado;
   else if(data.resultados) lista = data.resultados;
+  else if(data.data) lista = data.data;
 
-  return lista.map(r=>({
+  return lista.map(r=>{
 
-    horario: extrairHorario(r.horario || r.nome),
-    p1: r.p1 || r.premio1,
-    p2: r.p2 || r.premio2,
-    p3: r.p3 || r.premio3,
-    p4: r.p4 || r.premio4,
-    p5: r.p5 || r.premio5
+    const nums = [
+      r.p1 || r.premio1,
+      r.p2 || r.premio2,
+      r.p3 || r.premio3,
+      r.p4 || r.premio4,
+      r.p5 || r.premio5
+    ];
 
-  })).filter(resultadoValido);
+    if(nums.some(n => !n)) return null;
+
+    return {
+      horario: extrairHorario(r.horario || r.nome || r.titulo || "") || "00:00",
+      p1: nums[0],
+      p2: nums[1],
+      p3: nums[2],
+      p4: nums[3],
+      p5: nums[4]
+    };
+
+  }).filter(Boolean).filter(resultadoValido);
 }
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER
+// 🔍 SCRAPER INTELIGENTE
 //////////////////////////////////////////////////
 
 async function scraper(url){
@@ -99,18 +125,28 @@ async function scraper(url){
   const $ = cheerio.load(html);
   let resultados = [];
 
-  $("table").each((i,t)=>{
+  $("h2, h3, strong").each((i, el)=>{
+
+    const titulo = $(el).text();
+
+    const horario = extrairHorario(titulo);
+    if(!horario) return;
+
+    const tabela = $(el).nextAll("table").first();
+
+    if(!tabela) return;
 
     let nums = [];
 
-    $(t).find("tr").each((i,tr)=>{
-      const m = $(tr).text().match(/\d{4}/g);
+    tabela.find("tr").each((i,tr)=>{
+      const m = $(tr).text().match(/\b\d{4}\b/g);
       if(m) nums.push(...m);
     });
 
     if(nums.length >= 5){
+
       resultados.push({
-        horario: "00:00",
+        horario,
         p1: nums[0],
         p2: nums[1],
         p3: nums[2],
@@ -129,21 +165,30 @@ async function scraper(url){
 
 async function buscarBanca(banca){
 
+  console.log("🔎 Buscando:", banca);
+
   // 🔥 tenta API
   const apiData = await fetchAPI(APIS[banca]);
-
   let dados = normalizarAPI(apiData);
 
-  if(dados.length > 0){
-    return dados;
+  console.log("API retornou:", dados.length);
+
+  // 🔁 fallback se falhar
+  if(dados.length < 2){
+
+    console.log("⚠️ fallback scraping:", banca);
+
+    if(FONTES[banca]){
+      const raspado = await scraper(FONTES[banca]);
+
+      if(raspado.length > 0){
+        console.log("✔ scraping OK:", raspado.length);
+        return raspado;
+      }
+    }
   }
 
-  // 🔁 fallback scraping
-  if(FONTES[banca]){
-    return await scraper(FONTES[banca]);
-  }
-
-  return [];
+  return dados;
 }
 
 //////////////////////////////////////////////////
@@ -166,8 +211,8 @@ async function pegarTudo(){
 //////////////////////////////////////////////////
 
 mongoose.connect(process.env.MONGO_URL)
-  .then(()=> console.log("Mongo OK"))
-  .catch(()=> console.log("Erro Mongo"));
+  .then(()=> console.log("✅ Mongo conectado"))
+  .catch(()=> console.log("❌ erro Mongo"));
 
 const Resultado = mongoose.model("Resultado", new mongoose.Schema({
   uniqueId: { type: String, unique: true },
@@ -185,7 +230,7 @@ async function salvar(dados){
 
     for(const r of dados[banca]){
 
-      const uniqueId = `${hoje}-${banca}-${r.horario}-${r.p1}-${r.p2}`;
+      const uniqueId = `${hoje}-${banca}-${r.horario}-${r.p1}-${r.p2}-${r.p3}`;
 
       await Resultado.findOneAndUpdate(
         { uniqueId },
@@ -209,6 +254,8 @@ async function carregar(){
     return cache;
   }
 
+  console.log("🔄 ATUALIZANDO...");
+
   const dados = await pegarTudo();
 
   await salvar(dados);
@@ -228,30 +275,37 @@ async function carregar(){
 //////////////////////////////////////////////////
 
 app.get("/", (req,res)=>{
-  res.send("🔥 API POR BANCA ONLINE");
+  res.send("🔥 API PRO COMPLETA ONLINE");
 });
 
-// geral
 app.get("/resultados", async (req,res)=>{
-  const dados = await carregar();
-  res.json(dados);
+  try{
+    const dados = await carregar();
+    res.json(dados);
+  }catch(e){
+    res.status(500).json({ erro: e.message });
+  }
 });
 
-// por banca
 app.get("/resultados/:banca", async (req,res)=>{
 
   const banca = req.params.banca.toLowerCase();
 
-  const dados = await carregar();
+  try{
+    const dados = await carregar();
 
-  if(!dados.historico[banca]){
-    return res.status(404).json({ erro: "Banca inválida" });
+    if(!dados.historico[banca]){
+      return res.status(404).json({ erro: "Banca inválida" });
+    }
+
+    res.json({
+      atualizado: dados.atualizado,
+      resultados: dados.historico[banca]
+    });
+
+  }catch(e){
+    res.status(500).json({ erro: e.message });
   }
-
-  res.json({
-    atualizado: dados.atualizado,
-    resultados: dados.historico[banca]
-  });
 });
 
 //////////////////////////////////////////////////
