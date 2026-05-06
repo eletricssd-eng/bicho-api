@@ -223,11 +223,10 @@ async function buscarResultados(fontes){
 //////////////////////////////////////////////////
 
 const FONTES = [
-  "https://ejogodobicho.com/resultados-rio-pt",
-  "https://ejogodobicho.com/resultados-look-goias",
-  "https://ejogodobicho.com/resultados-loteria-nacional-ln",
-  "https://bichodata.com",
-  "https://playbicho.com/resultado-jogo-do-bicho"
+  "https://www.resultadofacil.com.br/resultados-pt-rio" ,
+  "https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje-de-hoje",
+  "https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"
+  
 ];
 
 //////////////////////////////////////////////////
@@ -237,7 +236,7 @@ const FONTES = [
 async function pegarFederal(){
   try{
     const { data } = await axios.get(
-      "https://servicebus2.caixa.gov.br/portaldeloterias/api/federal"
+      "https://www.resultadofacil.com.br/resultado-banca-federal"
     );
 
     const r = data.listaResultado?.[0];
