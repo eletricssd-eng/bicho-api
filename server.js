@@ -26,6 +26,23 @@ const USER_AGENTS = [
 const delay = ms => new Promise(r => setTimeout(r, ms));
 
 //////////////////////////////////////////////////
+// 🔥 APIS FIXAS (GARANTIA)
+//////////////////////////////////////////////////
+
+const APIS = {};
+
+const APIS_FIXAS = [
+  "https://www.resultadofacil.com.br/api/resultado/pt-rio",
+  "https://www.resultadofacil.com.br/api/resultado/look",
+  "https://www.resultadofacil.com.br/api/resultado/nacional",
+  "https://www.resultadofacil.com.br/api/resultado/federal"
+];
+
+APIS_FIXAS.forEach(url=>{
+  APIS[url] = { score: 10 };
+});
+
+//////////////////////////////////////////////////
 // 📊 SCORE
 //////////////////////////////////////////////////
 
@@ -122,20 +139,41 @@ function normalizarAPI(data){
 
   if(Array.isArray(data)) lista = data;
   else if(data.listaResultado) lista = data.listaResultado;
+  else if(data.resultados) lista = data.resultados;
 
-  return lista.map(r=>({
-    horario: extrairHorario(r.horario || r.nome),
-    p1: r.p1 || r.premio1,
-    p2: r.p2 || r.premio2,
-    p3: r.p3 || r.premio3,
-    p4: r.p4 || r.premio4,
-    p5: r.p5 || r.premio5
-  })).filter(resultadoValido);
+  return lista.map(r=>{
+
+    const nums = [
+      r.p1 || r.premio1,
+      r.p2 || r.premio2,
+      r.p3 || r.premio3,
+      r.p4 || r.premio4,
+      r.p5 || r.premio5
+    ];
+
+    if(nums.some(n => !n)) return null;
+
+    return {
+      horario: extrairHorario(r.horario || r.nome || ""),
+      p1: nums[0],
+      p2: nums[1],
+      p3: nums[2],
+      p4: nums[3],
+      p5: nums[4]
+    };
+
+  }).filter(Boolean);
 }
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER
+// 🔍 SCRAPER (REAL)
 //////////////////////////////////////////////////
+
+const FONTES = [
+  "https://www.resultadofacil.com.br/resultados-pt-rio",
+  "https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje",
+  "https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje-de-hoje"
+];
 
 async function scraper(url){
 
@@ -146,6 +184,7 @@ async function scraper(url){
   let resultados = [];
 
   $("table").each((i,t)=>{
+
     let nums = [];
 
     $(t).find("tr").each((i,tr)=>{
@@ -171,10 +210,8 @@ async function scraper(url){
 }
 
 //////////////////////////////////////////////////
-// 🔍 DESCOBERTA DE APIs
+// 🔍 AUTO DISCOVERY
 //////////////////////////////////////////////////
-
-const APIS = {};
 
 async function descobrirAPIs(){
 
@@ -189,65 +226,46 @@ async function descobrirAPIs(){
       }
     }
 
-  }catch{}
-}
-
-async function escanearScripts(){
-
-  try{
-    const { data } = await axios.get(BASE_URL);
-    const $ = cheerio.load(data);
-
-    let scripts = [];
-
-    $("script").each((i,e)=>{
-      const src = $(e).attr("src");
-      if(src){
-        scripts.push(src.startsWith("http") ? src : BASE_URL + src);
-      }
-    });
-
-    for(const s of scripts){
-      try{
-        const { data } = await axios.get(s);
-
-        const matches = data.match(/\/api\/[a-zA-Z0-9-_\/]+/g);
-
-        if(matches){
-          matches.forEach(m=>{
-            APIS[BASE_URL + m] = { score: 1 };
-          });
-        }
-
-      }catch{}
-    }
+    console.log("🔍 APIs encontradas:", Object.keys(APIS).length);
 
   }catch{}
 }
 
 //////////////////////////////////////////////////
-// 🔁 BUSCA PRO
+// 🔁 BUSCA
 //////////////////////////////////////////////////
 
 async function buscarResultados(){
 
+  console.log("🚀 Buscando...");
+
   const urls = Object.keys(APIS);
 
-  // 🔥 tenta APIs
+  console.log("APIS:", urls);
+
   let respostas = await Promise.all(
     urls.map(url => fetchAPI(url))
   );
 
+  console.log("RESPOSTAS:", respostas.length);
+
   let dados = respostas
     .map(r => normalizarAPI(r))
-    .flat();
+    .flat()
+    .filter(resultadoValido);
 
   if(dados.length > 0){
+    console.log("✅ Dados via API:", dados.length);
     return dados;
   }
 
-  // 🔁 fallback scraping
-  return await scraper(BASE_URL);
+  console.log("⚠️ fallback scraping...");
+
+  const raspados = await Promise.all(
+    FONTES.map(url => scraper(url))
+  );
+
+  return raspados.flat();
 }
 
 //////////////////////////////////////////////////
@@ -255,11 +273,12 @@ async function buscarResultados(){
 //////////////////////////////////////////////////
 
 mongoose.connect(process.env.MONGO_URL)
-  .then(()=> console.log("Mongo OK"))
-  .catch(()=> console.log("Erro Mongo"));
+  .then(()=> console.log("✅ Mongo OK"))
+  .catch(()=> console.log("❌ erro Mongo"));
 
 const Resultado = mongoose.model("Resultado", new mongoose.Schema({
   data: String,
+  horario: String,
   p1:String,p2:String,p3:String,p4:String,p5:String
 }));
 
@@ -304,7 +323,7 @@ async function carregar(){
 //////////////////////////////////////////////////
 
 app.get("/", (req,res)=>{
-  res.send("API PRO MAX 🔥");
+  res.send("🔥 API PRO FUNCIONANDO");
 });
 
 app.get("/resultados", async (req,res)=>{
@@ -317,16 +336,15 @@ app.get("/resultados", async (req,res)=>{
 });
 
 //////////////////////////////////////////////////
-// 🚀 AUTO UPDATE
+// 🔄 AUTO UPDATE
 //////////////////////////////////////////////////
 
 setInterval(descobrirAPIs, 1000 * 60 * 10);
-setInterval(escanearScripts, 1000 * 60 * 30);
 
 //////////////////////////////////////////////////
-// START
+// 🚀 START
 //////////////////////////////////////////////////
 
 app.listen(PORT, ()=>{
-  console.log("🚀 rodando", PORT);
+  console.log("🚀 rodando na porta", PORT);
 });
