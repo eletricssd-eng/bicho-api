@@ -14,6 +14,15 @@ const PORT = process.env.PORT || 3000;
 // 🔧 CONFIG
 //////////////////////////////////////////////////
 
+const HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+  "Accept": "text/html,application/json",
+  "Accept-Language": "pt-BR,pt;q=0.9",
+  "Referer": "https://www.resultadofacil.com.br/",
+  "Origin": "https://www.resultadofacil.com.br",
+  "Connection": "keep-alive"
+};
+
 const APIS = {
   rio: "https://www.resultadofacil.com.br/api/resultado/pt-rio",
   look: "https://www.resultadofacil.com.br/api/resultado/look",
@@ -28,54 +37,62 @@ const FONTES = {
 };
 
 //////////////////////////////////////////////////
+// 🔁 RETRY
+//////////////////////////////////////////////////
+
+async function fetchComRetry(url, tipo = "html", tentativas = 3){
+
+  for(let i = 0; i < tentativas; i++){
+    try{
+
+      const res = await axios.get(url, {
+        timeout: 15000,
+        headers: HEADERS
+      });
+
+      return res.data;
+
+    }catch(e){
+      console.log(`❌ erro (${i+1}) em ${url}`);
+      await new Promise(r => setTimeout(r, 1000 * (i+1)));
+    }
+  }
+
+  return null;
+}
+
+//////////////////////////////////////////////////
 // 🌐 FETCH
 //////////////////////////////////////////////////
 
 async function fetchAPI(url){
-  try{
-    const res = await axios.get(url, { timeout: 10000 });
-    return res.data;
-  }catch{
-    return null;
-  }
+  return await fetchComRetry(url, "json");
 }
 
 async function fetchHTML(url){
-  try{
-    const res = await axios.get(url, { timeout: 15000 });
-    return res.data;
-  }catch{
-    return null;
-  }
+  return await fetchComRetry(url, "html");
 }
 
 //////////////////////////////////////////////////
-// 🧠 FUNÇÕES AUXILIARES
+// 🧠 AUX
 //////////////////////////////////////////////////
 
 function extrairHorario(texto){
-  if(!texto) return null;
+  const m = texto?.match(/\d{1,2}:\d{2}|\d{1,2}h/);
+  if(!m) return null;
 
-  const match = texto.match(/\d{1,2}:\d{2}|\d{1,2}h/);
-  if(!match) return null;
-
-  let h = match[0].replace("h", ":00");
-
+  let h = m[0].replace("h", ":00");
   const [hora, min] = h.split(":");
 
   return `${hora.padStart(2,"0")}:${min}`;
 }
 
 function resultadoValido(r){
-  if(!r) return false;
-
-  const nums = [r.p1,r.p2,r.p3,r.p4,r.p5];
-
-  return nums.every(n => /^\d{4}$/.test(n));
+  return [r.p1,r.p2,r.p3,r.p4,r.p5].every(n => /^\d{4}$/.test(n));
 }
 
 //////////////////////////////////////////////////
-// 🧠 NORMALIZAÇÃO API
+// 🧠 NORMALIZAÇÃO
 //////////////////////////////////////////////////
 
 function normalizarAPI(data){
@@ -102,7 +119,7 @@ function normalizarAPI(data){
     if(nums.some(n => !n)) return null;
 
     return {
-      horario: extrairHorario(r.horario || r.nome || r.titulo || "") || "00:00",
+      horario: extrairHorario(r.horario || r.nome || "") || "00:00",
       p1: nums[0],
       p2: nums[1],
       p3: nums[2],
@@ -114,39 +131,38 @@ function normalizarAPI(data){
 }
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER INTELIGENTE
+// 🔍 SCRAPER ROBUSTO
 //////////////////////////////////////////////////
 
 async function scraper(url){
 
   const html = await fetchHTML(url);
-  if(!html) return [];
+
+  if(!html){
+    console.log("❌ HTML vazio:", url);
+    return [];
+  }
+
+  // DEBUG REAL
+  console.log("📄 HTML recebido (inicio):", html.slice(0,200));
 
   const $ = cheerio.load(html);
+
   let resultados = [];
 
-  $("h2, h3, strong").each((i, el)=>{
-
-    const titulo = $(el).text();
-
-    const horario = extrairHorario(titulo);
-    if(!horario) return;
-
-    const tabela = $(el).nextAll("table").first();
-
-    if(!tabela) return;
+  $("table").each((i, tabela)=>{
 
     let nums = [];
 
-    tabela.find("tr").each((i,tr)=>{
-      const m = $(tr).text().match(/\b\d{4}\b/g);
-      if(m) nums.push(...m);
+    $(tabela).find("tr").each((i,tr)=>{
+      const match = $(tr).text().match(/\b\d{4}\b/g);
+      if(match) nums.push(...match);
     });
 
     if(nums.length >= 5){
 
       resultados.push({
-        horario,
+        horario: `extra-${i}`,
         p1: nums[0],
         p2: nums[1],
         p3: nums[2],
@@ -156,33 +172,32 @@ async function scraper(url){
     }
   });
 
+  console.log("📊 SCRAPER achou:", resultados.length);
+
   return resultados.filter(resultadoValido);
 }
 
 //////////////////////////////////////////////////
-// 🔁 BUSCA POR BANCA
+// 🔁 BUSCA
 //////////////////////////////////////////////////
 
 async function buscarBanca(banca){
 
   console.log("🔎 Buscando:", banca);
 
-  // 🔥 tenta API
   const apiData = await fetchAPI(APIS[banca]);
   let dados = normalizarAPI(apiData);
 
-  console.log("API retornou:", dados.length);
+  console.log("API:", dados.length);
 
-  // 🔁 fallback se falhar
   if(dados.length < 2){
 
-    console.log("⚠️ fallback scraping:", banca);
+    console.log("⚠️ usando scraper:", banca);
 
     if(FONTES[banca]){
       const raspado = await scraper(FONTES[banca]);
 
       if(raspado.length > 0){
-        console.log("✔ scraping OK:", raspado.length);
         return raspado;
       }
     }
@@ -275,37 +290,12 @@ async function carregar(){
 //////////////////////////////////////////////////
 
 app.get("/", (req,res)=>{
-  res.send("🔥 API PRO COMPLETA ONLINE");
+  res.send("🔥 API ANTI-BLOQUEIO ONLINE");
 });
 
 app.get("/resultados", async (req,res)=>{
-  try{
-    const dados = await carregar();
-    res.json(dados);
-  }catch(e){
-    res.status(500).json({ erro: e.message });
-  }
-});
-
-app.get("/resultados/:banca", async (req,res)=>{
-
-  const banca = req.params.banca.toLowerCase();
-
-  try{
-    const dados = await carregar();
-
-    if(!dados.historico[banca]){
-      return res.status(404).json({ erro: "Banca inválida" });
-    }
-
-    res.json({
-      atualizado: dados.atualizado,
-      resultados: dados.historico[banca]
-    });
-
-  }catch(e){
-    res.status(500).json({ erro: e.message });
-  }
+  const dados = await carregar();
+  res.json(dados);
 });
 
 //////////////////////////////////////////////////
