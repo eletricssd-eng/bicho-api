@@ -14,21 +14,23 @@ const PORT = process.env.PORT || 3000;
 // 🔧 CONFIG
 //////////////////////////////////////////////////
 
+const BASE_URL = "https://www.resultadofacil.com.br";
+
 const USER_AGENTS = [
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
   "Mozilla/5.0 (Linux; Android 10)",
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)"
+  "Mozilla/5.0 (iPhone)"
 ];
-
-const fonteScore = {};
-const fonteFail = {};
 
 const delay = ms => new Promise(r => setTimeout(r, ms));
 
 //////////////////////////////////////////////////
-// 🧠 SCORE
+// 📊 SCORE
 //////////////////////////////////////////////////
+
+const fonteScore = {};
+const fonteFail = {};
 
 function scoreUp(url){
   fonteScore[url] = (fonteScore[url] || 0) + 2;
@@ -45,41 +47,48 @@ function bloqueada(url){
 }
 
 //////////////////////////////////////////////////
-// 🚀 FETCH
+// 🌐 FETCH
 //////////////////////////////////////////////////
 
-async function fetchHTML(url, tentativas = 3){
+async function fetchHTML(url){
 
   if(bloqueada(url)) return null;
 
-  for(let i = 0; i < tentativas; i++){
-    try{
-      const res = await axios.get(url, {
-        timeout: 15000,
-        headers: {
-          "User-Agent": USER_AGENTS[Math.random()*USER_AGENTS.length | 0],
-          "Accept": "text/html",
-          "Accept-Language": "pt-BR,pt;q=0.9",
-          "Cache-Control": "no-cache"
-        },
-        validateStatus: () => true
-      });
-
-      if(res.status >= 200 && res.status < 300){
-        scoreUp(url);
-        return res.data;
+  try{
+    const res = await axios.get(url, {
+      timeout: 15000,
+      headers: {
+        "User-Agent": USER_AGENTS[Math.random()*USER_AGENTS.length | 0]
       }
+    });
 
-      scoreDown(url);
-      await delay(1000 * (i+1));
+    scoreUp(url);
+    return res.data;
 
-    }catch{
-      scoreDown(url);
-      await delay(1000 * (i+1));
-    }
+  }catch{
+    scoreDown(url);
+    return null;
   }
+}
 
-  return null;
+async function fetchAPI(url){
+
+  try{
+    const res = await axios.get(url, {
+      timeout: 10000,
+      headers: {
+        "User-Agent": USER_AGENTS[Math.random()*USER_AGENTS.length | 0],
+        "Accept": "application/json"
+      }
+    });
+
+    scoreUp(url);
+    return res.data;
+
+  }catch{
+    scoreDown(url);
+    return null;
+  }
 }
 
 //////////////////////////////////////////////////
@@ -87,71 +96,41 @@ async function fetchHTML(url, tentativas = 3){
 //////////////////////////////////////////////////
 
 function limparNumeros(nums){
-  return nums.filter(n=>{
-    if(!/^\d{4}$/.test(n)) return false;
-    const num = parseInt(n);
-    if(num < 1000 || num > 9999) return false;
-
-    if([
-      "0000","1111","2222","3333","4444",
-      "5555","6666","7777","8888","9999",
-      "1234","1000","2024","2025","2026"
-    ].includes(n)) return false;
-
-    return true;
-  });
+  return nums.filter(n => /^\d{4}$/.test(n));
 }
-
-//////////////////////////////////////////////////
-// 🕐 HORARIO
-//////////////////////////////////////////////////
 
 function extrairHorario(texto){
-  if(!texto) return null;
-
-  const match = texto.match(/\d{1,2}:\d{2}|\d{1,2}h/);
-  if(!match) return null;
-
-  let h = match[0].replace("h", ":00");
-  const [hora, min] = h.split(":");
-
-  return `${hora.padStart(2,"0")}:${min}`;
+  const m = texto?.match(/\d{1,2}:\d{2}/);
+  return m ? m[0] : "00:00";
 }
-
-//////////////////////////////////////////////////
-// ✅ VALIDAÇÃO
-//////////////////////////////////////////////////
 
 function resultadoValido(r){
   if(!r) return false;
-
   const nums = [r.p1,r.p2,r.p3,r.p4,r.p5];
-
-  if(nums.some(n => !/^\d{4}$/.test(n))) return false;
-
-  if(new Set(nums).size < 3) return false;
-
-  return true;
+  return nums.every(n => /^\d{4}$/.test(n));
 }
 
 //////////////////////////////////////////////////
-// 🧠 CONSENSO
+// 🧠 NORMALIZADOR
 //////////////////////////////////////////////////
 
-function consensoResultados(lista){
+function normalizarAPI(data){
 
-  const mapa = {};
+  if(!data) return [];
 
-  lista.forEach(r=>{
-    const chave = `${r.horario}-${r.p1}-${r.p2}-${r.p3}`;
+  let lista = [];
 
-    if(!mapa[chave]) mapa[chave] = [];
-    mapa[chave].push(r);
-  });
+  if(Array.isArray(data)) lista = data;
+  else if(data.listaResultado) lista = data.listaResultado;
 
-  return Object.values(mapa)
-    .filter(grupo => grupo.length >= 2)
-    .map(grupo => grupo[0]);
+  return lista.map(r=>({
+    horario: extrairHorario(r.horario || r.nome),
+    p1: r.p1 || r.premio1,
+    p2: r.p2 || r.premio2,
+    p3: r.p3 || r.premio3,
+    p4: r.p4 || r.premio4,
+    p5: r.p5 || r.premio5
+  })).filter(resultadoValido);
 }
 
 //////////////////////////////////////////////////
@@ -161,188 +140,135 @@ function consensoResultados(lista){
 async function scraper(url){
 
   const html = await fetchHTML(url);
-  if(!html || typeof html !== "string") return [];
+  if(!html) return [];
+
+  const $ = cheerio.load(html);
+  let resultados = [];
+
+  $("table").each((i,t)=>{
+    let nums = [];
+
+    $(t).find("tr").each((i,tr)=>{
+      const m = $(tr).text().match(/\d{4}/g);
+      if(m) nums.push(...m);
+    });
+
+    nums = limparNumeros(nums);
+
+    if(nums.length >= 5){
+      resultados.push({
+        horario: "00:00",
+        p1: nums[0],
+        p2: nums[1],
+        p3: nums[2],
+        p4: nums[3],
+        p5: nums[4]
+      });
+    }
+  });
+
+  return resultados.filter(resultadoValido);
+}
+
+//////////////////////////////////////////////////
+// 🔍 DESCOBERTA DE APIs
+//////////////////////////////////////////////////
+
+const APIS = {};
+
+async function descobrirAPIs(){
 
   try{
-    const $ = cheerio.load(html);
-    let resultados = [];
+    const { data } = await axios.get(BASE_URL);
 
-    const bodyText = $("body").text();
-    if(!/resultado|extração|prêmio/i.test(bodyText)){
-      return [];
+    const links = data.match(/https?:\/\/[^\s"'<>]+/g) || [];
+
+    for(const l of links){
+      if(l.includes("api") || l.includes("resultado")){
+        APIS[l] = { score: 1 };
+      }
     }
 
-    $("table").each((i, tabela)=>{
+  }catch{}
+}
 
-      const texto = $(tabela).text();
+async function escanearScripts(){
 
-      if(!/1º|2º|3º|4º|5º/i.test(texto)) return;
+  try{
+    const { data } = await axios.get(BASE_URL);
+    const $ = cheerio.load(data);
 
-      let nums = [];
+    let scripts = [];
 
-      $(tabela).find("tr").each((i,tr)=>{
-        const match = $(tr).text().match(/\b\d{4}\b/g);
-        if(match) nums.push(...match);
-      });
-
-      nums = limparNumeros(nums);
-
-      if(nums.length >= 5){
-
-        resultados.push({
-          horario: extrairHorario(texto) || "00:00",
-          p1: nums[0],
-          p2: nums[1],
-          p3: nums[2],
-          p4: nums[3],
-          p5: nums[4]
-        });
+    $("script").each((i,e)=>{
+      const src = $(e).attr("src");
+      if(src){
+        scripts.push(src.startsWith("http") ? src : BASE_URL + src);
       }
     });
 
-    if(resultados.length > 0) scoreUp(url);
-    else scoreDown(url);
+    for(const s of scripts){
+      try{
+        const { data } = await axios.get(s);
 
-    return resultados.filter(resultadoValido);
+        const matches = data.match(/\/api\/[a-zA-Z0-9-_\/]+/g);
 
-  }catch{
-    scoreDown(url);
-    return [];
-  }
-}
+        if(matches){
+          matches.forEach(m=>{
+            APIS[BASE_URL + m] = { score: 1 };
+          });
+        }
 
-//////////////////////////////////////////////////
-// 🌐 FONTES
-//////////////////////////////////////////////////
-
-const FONTES = {
-  rio: [
-    "https://www.resultadofacil.com.br/resultados-pt-rio",
-    "https://www.federalbicho.com/",
-    "https://www.resultadojogodobicho.com.br/"
-  ],
-  look: [
-    "https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"
-  ],
-  nacional: [
-    "https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje-de-hoje"
-  ]
-};
-
-//////////////////////////////////////////////////
-// 🔁 BUSCA POR BANCA
-//////////////////////////////////////////////////
-
-async function buscarPorBanca(fontes){
-
-  const ordenadas = [...fontes].sort((a,b)=>{
-    return (fonteScore[b] || 0) - (fonteScore[a] || 0);
-  });
-
-  const respostas = await Promise.all(
-    ordenadas.map(url => scraper(url))
-  );
-
-  let todos = respostas.flat();
-
-  todos = todos.filter(resultadoValido);
-
-  const confiaveis = consensoResultados(todos);
-
-  return confiaveis.sort((a,b)=> a.horario.localeCompare(b.horario));
-}
-
-//////////////////////////////////////////////////
-// 🏦 FEDERAL
-//////////////////////////////////////////////////
-
-async function pegarFederal(){
-  try{
-    const html = await fetchHTML("https://www.resultadofacil.com.br/resultado-banca-federal");
-
-    if(typeof html === "string"){
-      const $ = cheerio.load(html);
-      let nums = [];
-
-      $("table tr").each((i,tr)=>{
-        const match = $(tr).text().match(/\d{4}/g);
-        if(match) nums.push(...match);
-      });
-
-      nums = limparNumeros(nums);
-
-      if(nums.length >= 5){
-        return [{
-          horario: "federal",
-          p1: nums[0],
-          p2: nums[1],
-          p3: nums[2],
-          p4: nums[3],
-          p5: nums[4]
-        }];
-      }
+      }catch{}
     }
 
-    return [];
-  }catch{
-    return [];
-  }
+  }catch{}
 }
 
 //////////////////////////////////////////////////
-// 🚀 PIPELINE
+// 🔁 BUSCA PRO
 //////////////////////////////////////////////////
 
-async function pegarTudo(){
+async function buscarResultados(){
 
-  const resultado = {};
+  const urls = Object.keys(APIS);
 
-  for(const banca in FONTES){
-    resultado[banca] = await buscarPorBanca(FONTES[banca]);
+  // 🔥 tenta APIs
+  let respostas = await Promise.all(
+    urls.map(url => fetchAPI(url))
+  );
+
+  let dados = respostas
+    .map(r => normalizarAPI(r))
+    .flat();
+
+  if(dados.length > 0){
+    return dados;
   }
 
-  resultado.federal = await pegarFederal();
-
-  return resultado;
+  // 🔁 fallback scraping
+  return await scraper(BASE_URL);
 }
 
 //////////////////////////////////////////////////
 // 💾 MONGO
 //////////////////////////////////////////////////
 
-const MONGO_URL = process.env.MONGO_URL;
-
-mongoose.connect(MONGO_URL)
-  .then(()=> console.log("✅ Mongo conectado"))
-  .catch(()=> console.log("❌ erro Mongo"));
+mongoose.connect(process.env.MONGO_URL)
+  .then(()=> console.log("Mongo OK"))
+  .catch(()=> console.log("Erro Mongo"));
 
 const Resultado = mongoose.model("Resultado", new mongoose.Schema({
-  uniqueId: { type: String, unique: true },
   data: String,
-  banca: String,
-  horario: String,
-  p1: String,
-  p2: String,
-  p3: String,
-  p4: String,
-  p5: String
+  p1:String,p2:String,p3:String,p4:String,p5:String
 }));
 
-async function salvarMongo(dados){
+async function salvar(dados){
 
   const hoje = new Date().toISOString().split("T")[0];
 
-  for(const banca in dados){
-    for(const item of dados[banca]){
-
-      const uniqueId = `${hoje}-${banca}-${item.horario}`;
-
-      await Resultado.findOneAndUpdate(
-        { uniqueId },
-        { ...item, banca, data: hoje, uniqueId },
-        { upsert: true }
-      );
-    }
+  for(const r of dados){
+    await Resultado.create({ ...r, data: hoje });
   }
 }
 
@@ -353,26 +279,22 @@ async function salvarMongo(dados){
 let cache = null;
 let tempo = 0;
 
-async function carregarTudo(){
+async function carregar(){
 
-  const agora = Date.now();
-
-  if(cache && (agora - tempo < 60000)){
+  if(cache && Date.now() - tempo < 60000){
     return cache;
   }
 
-  console.log("🔄 ATUALIZANDO...");
+  const dados = await buscarResultados();
 
-  const dados = await pegarTudo();
-
-  await salvarMongo(dados);
+  await salvar(dados);
 
   cache = {
     atualizado: new Date().toLocaleString("pt-BR"),
-    historico: dados
+    dados
   };
 
-  tempo = agora;
+  tempo = Date.now();
 
   return cache;
 }
@@ -382,22 +304,29 @@ async function carregarTudo(){
 //////////////////////////////////////////////////
 
 app.get("/", (req,res)=>{
-  res.send("✅ API PRO ONLINE");
+  res.send("API PRO MAX 🔥");
 });
 
 app.get("/resultados", async (req,res)=>{
   try{
-    const dados = await carregarTudo();
-    res.json(dados);
+    const r = await carregar();
+    res.json(r);
   }catch(e){
     res.status(500).json({ erro: e.message });
   }
 });
 
 //////////////////////////////////////////////////
-// 🚀 START
+// 🚀 AUTO UPDATE
+//////////////////////////////////////////////////
+
+setInterval(descobrirAPIs, 1000 * 60 * 10);
+setInterval(escanearScripts, 1000 * 60 * 30);
+
+//////////////////////////////////////////////////
+// START
 //////////////////////////////////////////////////
 
 app.listen(PORT, ()=>{
-  console.log("🚀 rodando na porta", PORT);
+  console.log("🚀 rodando", PORT);
 });
