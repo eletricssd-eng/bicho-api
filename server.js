@@ -16,105 +16,44 @@ const PORT = process.env.PORT || 3000;
 
 const BASE_URL = "https://www.resultadofacil.com.br";
 
-const USER_AGENTS = [
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-  "Mozilla/5.0 (Linux; Android 10)",
-  "Mozilla/5.0 (iPhone)"
-];
+const APIS = {
+  rio: "https://www.resultadofacil.com.br/api/resultado/pt-rio",
+  look: "https://www.resultadofacil.com.br/api/resultado/look",
+  nacional: "https://www.resultadofacil.com.br/api/resultado/nacional",
+  federal: "https://www.resultadofacil.com.br/api/resultado/federal"
+};
 
-const delay = ms => new Promise(r => setTimeout(r, ms));
-
-//////////////////////////////////////////////////
-// 🔥 APIS FIXAS (GARANTIA)
-//////////////////////////////////////////////////
-
-const APIS = {};
-
-const APIS_FIXAS = [
-  "https://www.resultadofacil.com.br/api/resultado/pt-rio",
-  "https://www.resultadofacil.com.br/api/resultado/look",
-  "https://www.resultadofacil.com.br/api/resultado/nacional",
-  "https://www.resultadofacil.com.br/api/resultado/federal"
-];
-
-APIS_FIXAS.forEach(url=>{
-  APIS[url] = { score: 10 };
-});
-
-//////////////////////////////////////////////////
-// 📊 SCORE
-//////////////////////////////////////////////////
-
-const fonteScore = {};
-const fonteFail = {};
-
-function scoreUp(url){
-  fonteScore[url] = (fonteScore[url] || 0) + 2;
-  fonteFail[url] = 0;
-}
-
-function scoreDown(url){
-  fonteScore[url] = (fonteScore[url] || 0) - 2;
-  fonteFail[url] = (fonteFail[url] || 0) + 1;
-}
-
-function bloqueada(url){
-  return (fonteFail[url] || 0) >= 5;
-}
+const FONTES = {
+  rio: "https://www.resultadofacil.com.br/resultados-pt-rio",
+  look: "https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje",
+  nacional: "https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje-de-hoje"
+};
 
 //////////////////////////////////////////////////
 // 🌐 FETCH
 //////////////////////////////////////////////////
 
-async function fetchHTML(url){
-
-  if(bloqueada(url)) return null;
-
-  try{
-    const res = await axios.get(url, {
-      timeout: 15000,
-      headers: {
-        "User-Agent": USER_AGENTS[Math.random()*USER_AGENTS.length | 0]
-      }
-    });
-
-    scoreUp(url);
-    return res.data;
-
-  }catch{
-    scoreDown(url);
-    return null;
-  }
-}
-
 async function fetchAPI(url){
-
   try{
-    const res = await axios.get(url, {
-      timeout: 10000,
-      headers: {
-        "User-Agent": USER_AGENTS[Math.random()*USER_AGENTS.length | 0],
-        "Accept": "application/json"
-      }
-    });
-
-    scoreUp(url);
+    const res = await axios.get(url, { timeout: 10000 });
     return res.data;
-
   }catch{
-    scoreDown(url);
+    return null;
+  }
+}
+
+async function fetchHTML(url){
+  try{
+    const res = await axios.get(url);
+    return res.data;
+  }catch{
     return null;
   }
 }
 
 //////////////////////////////////////////////////
-// 🧹 FILTRO
+// 🧠 NORMALIZAÇÃO
 //////////////////////////////////////////////////
-
-function limparNumeros(nums){
-  return nums.filter(n => /^\d{4}$/.test(n));
-}
 
 function extrairHorario(texto){
   const m = texto?.match(/\d{1,2}:\d{2}/);
@@ -122,14 +61,9 @@ function extrairHorario(texto){
 }
 
 function resultadoValido(r){
-  if(!r) return false;
   const nums = [r.p1,r.p2,r.p3,r.p4,r.p5];
   return nums.every(n => /^\d{4}$/.test(n));
 }
-
-//////////////////////////////////////////////////
-// 🧠 NORMALIZADOR
-//////////////////////////////////////////////////
 
 function normalizarAPI(data){
 
@@ -141,39 +75,21 @@ function normalizarAPI(data){
   else if(data.listaResultado) lista = data.listaResultado;
   else if(data.resultados) lista = data.resultados;
 
-  return lista.map(r=>{
+  return lista.map(r=>({
 
-    const nums = [
-      r.p1 || r.premio1,
-      r.p2 || r.premio2,
-      r.p3 || r.premio3,
-      r.p4 || r.premio4,
-      r.p5 || r.premio5
-    ];
+    horario: extrairHorario(r.horario || r.nome),
+    p1: r.p1 || r.premio1,
+    p2: r.p2 || r.premio2,
+    p3: r.p3 || r.premio3,
+    p4: r.p4 || r.premio4,
+    p5: r.p5 || r.premio5
 
-    if(nums.some(n => !n)) return null;
-
-    return {
-      horario: extrairHorario(r.horario || r.nome || ""),
-      p1: nums[0],
-      p2: nums[1],
-      p3: nums[2],
-      p4: nums[3],
-      p5: nums[4]
-    };
-
-  }).filter(Boolean);
+  })).filter(resultadoValido);
 }
 
 //////////////////////////////////////////////////
-// 🔍 SCRAPER (REAL)
+// 🔍 SCRAPER
 //////////////////////////////////////////////////
-
-const FONTES = [
-  "https://www.resultadofacil.com.br/resultados-pt-rio",
-  "https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje",
-  "https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje-de-hoje"
-];
 
 async function scraper(url){
 
@@ -192,8 +108,6 @@ async function scraper(url){
       if(m) nums.push(...m);
     });
 
-    nums = limparNumeros(nums);
-
     if(nums.length >= 5){
       resultados.push({
         horario: "00:00",
@@ -210,62 +124,41 @@ async function scraper(url){
 }
 
 //////////////////////////////////////////////////
-// 🔍 AUTO DISCOVERY
+// 🔁 BUSCA POR BANCA
 //////////////////////////////////////////////////
 
-async function descobrirAPIs(){
+async function buscarBanca(banca){
 
-  try{
-    const { data } = await axios.get(BASE_URL);
+  // 🔥 tenta API
+  const apiData = await fetchAPI(APIS[banca]);
 
-    const links = data.match(/https?:\/\/[^\s"'<>]+/g) || [];
-
-    for(const l of links){
-      if(l.includes("api") || l.includes("resultado")){
-        APIS[l] = { score: 1 };
-      }
-    }
-
-    console.log("🔍 APIs encontradas:", Object.keys(APIS).length);
-
-  }catch{}
-}
-
-//////////////////////////////////////////////////
-// 🔁 BUSCA
-//////////////////////////////////////////////////
-
-async function buscarResultados(){
-
-  console.log("🚀 Buscando...");
-
-  const urls = Object.keys(APIS);
-
-  console.log("APIS:", urls);
-
-  let respostas = await Promise.all(
-    urls.map(url => fetchAPI(url))
-  );
-
-  console.log("RESPOSTAS:", respostas.length);
-
-  let dados = respostas
-    .map(r => normalizarAPI(r))
-    .flat()
-    .filter(resultadoValido);
+  let dados = normalizarAPI(apiData);
 
   if(dados.length > 0){
-    console.log("✅ Dados via API:", dados.length);
     return dados;
   }
 
-  console.log("⚠️ fallback scraping...");
+  // 🔁 fallback scraping
+  if(FONTES[banca]){
+    return await scraper(FONTES[banca]);
+  }
 
-  const raspados = await Promise.all(
-    FONTES.map(url => scraper(url))
-  );
+  return [];
+}
 
-  return raspados.flat();
+//////////////////////////////////////////////////
+// 🚀 PIPELINE
+//////////////////////////////////////////////////
+
+async function pegarTudo(){
+
+  const resultado = {};
+
+  for(const banca of ["rio","look","nacional","federal"]){
+    resultado[banca] = await buscarBanca(banca);
+  }
+
+  return resultado;
 }
 
 //////////////////////////////////////////////////
@@ -273,10 +166,12 @@ async function buscarResultados(){
 //////////////////////////////////////////////////
 
 mongoose.connect(process.env.MONGO_URL)
-  .then(()=> console.log("✅ Mongo OK"))
-  .catch(()=> console.log("❌ erro Mongo"));
+  .then(()=> console.log("Mongo OK"))
+  .catch(()=> console.log("Erro Mongo"));
 
 const Resultado = mongoose.model("Resultado", new mongoose.Schema({
+  uniqueId: { type: String, unique: true },
+  banca: String,
   data: String,
   horario: String,
   p1:String,p2:String,p3:String,p4:String,p5:String
@@ -286,8 +181,18 @@ async function salvar(dados){
 
   const hoje = new Date().toISOString().split("T")[0];
 
-  for(const r of dados){
-    await Resultado.create({ ...r, data: hoje });
+  for(const banca in dados){
+
+    for(const r of dados[banca]){
+
+      const uniqueId = `${hoje}-${banca}-${r.horario}-${r.p1}-${r.p2}`;
+
+      await Resultado.findOneAndUpdate(
+        { uniqueId },
+        { ...r, banca, data: hoje, uniqueId },
+        { upsert: true }
+      );
+    }
   }
 }
 
@@ -304,13 +209,13 @@ async function carregar(){
     return cache;
   }
 
-  const dados = await buscarResultados();
+  const dados = await pegarTudo();
 
   await salvar(dados);
 
   cache = {
     atualizado: new Date().toLocaleString("pt-BR"),
-    dados
+    historico: dados
   };
 
   tempo = Date.now();
@@ -323,23 +228,31 @@ async function carregar(){
 //////////////////////////////////////////////////
 
 app.get("/", (req,res)=>{
-  res.send("🔥 API PRO FUNCIONANDO");
+  res.send("🔥 API POR BANCA ONLINE");
 });
 
+// geral
 app.get("/resultados", async (req,res)=>{
-  try{
-    const r = await carregar();
-    res.json(r);
-  }catch(e){
-    res.status(500).json({ erro: e.message });
-  }
+  const dados = await carregar();
+  res.json(dados);
 });
 
-//////////////////////////////////////////////////
-// 🔄 AUTO UPDATE
-//////////////////////////////////////////////////
+// por banca
+app.get("/resultados/:banca", async (req,res)=>{
 
-setInterval(descobrirAPIs, 1000 * 60 * 10);
+  const banca = req.params.banca.toLowerCase();
+
+  const dados = await carregar();
+
+  if(!dados.historico[banca]){
+    return res.status(404).json({ erro: "Banca inválida" });
+  }
+
+  res.json({
+    atualizado: dados.atualizado,
+    resultados: dados.historico[banca]
+  });
+});
 
 //////////////////////////////////////////////////
 // 🚀 START
