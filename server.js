@@ -11,7 +11,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 //////////////////////////////////////////////////
-// 🔥 CONFIG
+// 🔧 CONFIG
 //////////////////////////////////////////////////
 
 const USER_AGENTS = [
@@ -27,7 +27,7 @@ const fonteFail = {};
 const delay = ms => new Promise(r => setTimeout(r, ms));
 
 //////////////////////////////////////////////////
-// 🧠 SCORE INTELIGENTE
+// 🧠 SCORE
 //////////////////////////////////////////////////
 
 function scoreUp(url){
@@ -45,7 +45,7 @@ function bloqueada(url){
 }
 
 //////////////////////////////////////////////////
-// 🚀 FETCH COM RETRY
+// 🚀 FETCH
 //////////////////////////////////////////////////
 
 async function fetchHTML(url, tentativas = 3){
@@ -53,13 +53,14 @@ async function fetchHTML(url, tentativas = 3){
   if(bloqueada(url)) return null;
 
   for(let i = 0; i < tentativas; i++){
-
     try{
       const res = await axios.get(url, {
         timeout: 15000,
         headers: {
           "User-Agent": USER_AGENTS[Math.random()*USER_AGENTS.length | 0],
-          "Accept": "text/html"
+          "Accept": "text/html",
+          "Accept-Language": "pt-BR,pt;q=0.9",
+          "Cache-Control": "no-cache"
         },
         validateStatus: () => true
       });
@@ -82,17 +83,13 @@ async function fetchHTML(url, tentativas = 3){
 }
 
 //////////////////////////////////////////////////
-// 🧠 FILTRO ANTI-LIXO
+// 🧹 FILTRO
 //////////////////////////////////////////////////
 
 function limparNumeros(nums){
-
-  return nums.filter(n => {
-
+  return nums.filter(n=>{
     if(!/^\d{4}$/.test(n)) return false;
-
     const num = parseInt(n);
-
     if(num < 1000 || num > 9999) return false;
 
     if([
@@ -106,22 +103,55 @@ function limparNumeros(nums){
 }
 
 //////////////////////////////////////////////////
-// 🧠 HORÁRIO
+// 🕐 HORARIO
 //////////////////////////////////////////////////
 
 function extrairHorario(texto){
-
   if(!texto) return null;
 
   const match = texto.match(/\d{1,2}:\d{2}|\d{1,2}h/);
-
   if(!match) return null;
 
   let h = match[0].replace("h", ":00");
-
   const [hora, min] = h.split(":");
 
   return `${hora.padStart(2,"0")}:${min}`;
+}
+
+//////////////////////////////////////////////////
+// ✅ VALIDAÇÃO
+//////////////////////////////////////////////////
+
+function resultadoValido(r){
+  if(!r) return false;
+
+  const nums = [r.p1,r.p2,r.p3,r.p4,r.p5];
+
+  if(nums.some(n => !/^\d{4}$/.test(n))) return false;
+
+  if(new Set(nums).size < 3) return false;
+
+  return true;
+}
+
+//////////////////////////////////////////////////
+// 🧠 CONSENSO
+//////////////////////////////////////////////////
+
+function consensoResultados(lista){
+
+  const mapa = {};
+
+  lista.forEach(r=>{
+    const chave = `${r.horario}-${r.p1}-${r.p2}-${r.p3}`;
+
+    if(!mapa[chave]) mapa[chave] = [];
+    mapa[chave].push(r);
+  });
+
+  return Object.values(mapa)
+    .filter(grupo => grupo.length >= 2)
+    .map(grupo => grupo[0]);
 }
 
 //////////////////////////////////////////////////
@@ -131,23 +161,22 @@ function extrairHorario(texto){
 async function scraper(url){
 
   const html = await fetchHTML(url);
-
   if(!html || typeof html !== "string") return [];
 
   try{
-
     const $ = cheerio.load(html);
     let resultados = [];
 
-    // 🚨 proteção contra página lixo
-    const texto = $("body").text();
-    if(!/resultado|extração|prêmio/i.test(texto)){
+    const bodyText = $("body").text();
+    if(!/resultado|extração|prêmio/i.test(bodyText)){
       return [];
     }
 
     $("table").each((i, tabela)=>{
 
-      const titulo = $(tabela).prevAll("h2,h3,strong").first().text();
+      const texto = $(tabela).text();
+
+      if(!/1º|2º|3º|4º|5º/i.test(texto)) return;
 
       let nums = [];
 
@@ -160,11 +189,8 @@ async function scraper(url){
 
       if(nums.length >= 5){
 
-        const horario = extrairHorario(titulo);
-        if(!horario) return;
-
         resultados.push({
-          horario,
+          horario: extrairHorario(texto) || "00:00",
           p1: nums[0],
           p2: nums[1],
           p3: nums[2],
@@ -174,60 +200,57 @@ async function scraper(url){
       }
     });
 
-    return resultados;
+    if(resultados.length > 0) scoreUp(url);
+    else scoreDown(url);
+
+    return resultados.filter(resultadoValido);
 
   }catch{
+    scoreDown(url);
     return [];
   }
-}
-
-//////////////////////////////////////////////////
-// 🔁 MULTI-FONTE
-//////////////////////////////////////////////////
-
-async function buscarResultados(fontes){
-
-  const ordenadas = [...fontes].sort((a,b)=>{
-    return (fonteScore[b] || 0) - (fonteScore[a] || 0);
-  });
-
-  const promessas = ordenadas.map(url => scraper(url));
-  const respostas = await Promise.all(promessas);
-
-  let todos = respostas.flat();
-
-  // só válidos
-  todos = todos.filter(r => r && r.horario);
-
-  // dedup forte
-  const mapa = new Map();
-
-  todos.forEach(r=>{
-    const chave = `${r.horario}-${r.p1}-${r.p2}-${r.p3}`;
-    if(!mapa.has(chave)){
-      mapa.set(chave, r);
-    }
-  });
-
-  let finais = Array.from(mapa.values());
-
-  // ordena
-  finais.sort((a,b)=> a.horario.localeCompare(b.horario));
-
-  // limite
-  return finais.slice(0, 10);
 }
 
 //////////////////////////////////////////////////
 // 🌐 FONTES
 //////////////////////////////////////////////////
 
-const FONTES = [
-  "https://www.resultadofacil.com.br/resultados-pt-rio" ,
-  "https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje-de-hoje",
-  "https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"
-  
-];
+const FONTES = {
+  rio: [
+    "https://www.resultadofacil.com.br/resultados-pt-rio",
+    "https://www.federalbicho.com/",
+    "https://www.resultadojogodobicho.com.br/"
+  ],
+  look: [
+    "https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"
+  ],
+  nacional: [
+    "https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje-de-hoje"
+  ]
+};
+
+//////////////////////////////////////////////////
+// 🔁 BUSCA POR BANCA
+//////////////////////////////////////////////////
+
+async function buscarPorBanca(fontes){
+
+  const ordenadas = [...fontes].sort((a,b)=>{
+    return (fonteScore[b] || 0) - (fonteScore[a] || 0);
+  });
+
+  const respostas = await Promise.all(
+    ordenadas.map(url => scraper(url))
+  );
+
+  let todos = respostas.flat();
+
+  todos = todos.filter(resultadoValido);
+
+  const confiaveis = consensoResultados(todos);
+
+  return confiaveis.sort((a,b)=> a.horario.localeCompare(b.horario));
+}
 
 //////////////////////////////////////////////////
 // 🏦 FEDERAL
@@ -235,22 +258,32 @@ const FONTES = [
 
 async function pegarFederal(){
   try{
-    const { data } = await axios.get(
-      "https://www.resultadofacil.com.br/resultado-banca-federal"
-    );
+    const html = await fetchHTML("https://www.resultadofacil.com.br/resultado-banca-federal");
 
-    const r = data.listaResultado?.[0];
-    if(!r) return [];
+    if(typeof html === "string"){
+      const $ = cheerio.load(html);
+      let nums = [];
 
-    return [{
-      horario: "federal",
-      p1: r.premio1,
-      p2: r.premio2,
-      p3: r.premio3,
-      p4: r.premio4,
-      p5: r.premio5
-    }];
+      $("table tr").each((i,tr)=>{
+        const match = $(tr).text().match(/\d{4}/g);
+        if(match) nums.push(...match);
+      });
 
+      nums = limparNumeros(nums);
+
+      if(nums.length >= 5){
+        return [{
+          horario: "federal",
+          p1: nums[0],
+          p2: nums[1],
+          p3: nums[2],
+          p4: nums[3],
+          p5: nums[4]
+        }];
+      }
+    }
+
+    return [];
   }catch{
     return [];
   }
@@ -262,17 +295,15 @@ async function pegarFederal(){
 
 async function pegarTudo(){
 
-  const [resultados, federal] = await Promise.all([
-    buscarResultados(FONTES),
-    pegarFederal()
-  ]);
+  const resultado = {};
 
-  return {
-    rio: resultados,
-    look: resultados,
-    nacional: resultados,
-    federal
-  };
+  for(const banca in FONTES){
+    resultado[banca] = await buscarPorBanca(FONTES[banca]);
+  }
+
+  resultado.federal = await pegarFederal();
+
+  return resultado;
 }
 
 //////////////////////////////////////////////////
@@ -316,7 +347,7 @@ async function salvarMongo(dados){
 }
 
 //////////////////////////////////////////////////
-// 🚀 CACHE
+// ⚡ CACHE
 //////////////////////////////////////////////////
 
 let cache = null;
@@ -351,7 +382,7 @@ async function carregarTudo(){
 //////////////////////////////////////////////////
 
 app.get("/", (req,res)=>{
-  res.send("✅ API ONLINE");
+  res.send("✅ API PRO ONLINE");
 });
 
 app.get("/resultados", async (req,res)=>{
