@@ -71,10 +71,11 @@ h1 {
 }
 
 /* GRID PADRÃO */
-.grid-5 {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 8px;
+.grid-5{
+  display:grid;
+  grid-template-columns:repeat(5,1fr);
+  gap:3px;
+  padding:3px;
 }
 
 /* TABELA */
@@ -94,12 +95,13 @@ h1 {
 }
 
 /* CARDS */
-.card {
-  background: #fff;
-  padding: 10px;
-  margin: 5px;
-  border-radius: 10px;
-  font-size: 14px;
+.card{
+  background:#fff;
+  padding:16px 6px;
+  border-radius:12px;
+  font-size:14px;
+  margin:0;
+  line-height:1.5;
 }
 
 /* RESULTADOS */
@@ -111,16 +113,12 @@ h1 {
 
 /* ANALISE */
 #analiseBox {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 18px;
+  width: 100%;
 }
 
 /* MAPA */
 #mapaGrid {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 18px;
+  width: 100%;
 }
 
 #mapaGrid div {
@@ -202,4 +200,18 @@ body{
   font-size:12px;
   text-align:center;
   border-radius:8px;
+}
+@media (max-width:600px){
+
+  .grid-5{
+    gap:2px;
+    padding:2px;
+  }
+
+  .card{
+    padding:14px 4px;
+    font-size:13px;
+    border-radius:10px;
+  }
+
 }

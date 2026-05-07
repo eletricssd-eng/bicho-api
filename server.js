@@ -3,12 +3,61 @@ import axios from "axios";
 import cors from "cors";
 import * as cheerio from "cheerio";
 import fs from "fs";
+import mongoose from "mongoose";
 
 const app = express();
 app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 const HISTORICO_FILE = "./historico.json";
+
+//////////////////////////////////////////////////
+// 🔥 MONGO (AUTO RECONNECT)
+//////////////////////////////////////////////////
+
+const MONGO_URL = process.env.MONGO_URL;
+
+async function conectarMongo(){
+
+  if(!MONGO_URL){
+    console.log("❌ MONGO_URL NÃO DEFINIDA");
+    return;
+  }
+
+  try{
+    await mongoose.connect(MONGO_URL, {
+      serverSelectionTimeoutMS: 5000
+    });
+
+    console.log("✅ Mongo conectado");
+
+  }catch(e){
+    console.log("❌ erro mongo:", e.message);
+    setTimeout(conectarMongo, 5000);
+  }
+
+}
+
+conectarMongo();
+
+//////////////////////////////////////////////////
+// 📦 MODEL (COM UNIQUEID)
+//////////////////////////////////////////////////
+
+const ResultadoSchema = new mongoose.Schema({
+  uniqueId: { type: String, unique: true },
+
+  data: String,
+  banca: String,
+  horario: String,
+  p1: String,
+  p2: String,
+  p3: String,
+  p4: String,
+  p5: String
+});
+
+const Resultado = mongoose.model("Resultado", ResultadoSchema);
 
 //////////////////////////////////////////////////
 // 🔍 SCRAPER
