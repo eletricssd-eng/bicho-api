@@ -12,6 +12,22 @@ const PORT = process.env.PORT || 3000;
 const HISTORICO_FILE = "./historico.json";
 
 //////////////////////////////////////////////////
+// 🇧🇷 TIMEZONE BRASIL (CORREÇÃO PRINCIPAL)
+//////////////////////////////////////////////////
+
+function agoraBR(){
+  return new Date().toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo"
+  });
+}
+
+function hojeBR(){
+  return new Date().toLocaleDateString("sv-SE", {
+    timeZone: "America/Sao_Paulo"
+  }); // YYYY-MM-DD
+}
+
+//////////////////////////////////////////////////
 // 🔥 MONGO (AUTO RECONNECT)
 //////////////////////////////////////////////////
 
@@ -171,6 +187,43 @@ async function pegarFederal(){
   }));
 
   return lista;
+}
+
+//////////////////////////////////////////////////
+// 💾 SALVAR (SEM DUPLICAR)
+//////////////////////////////////////////////////
+
+async function salvarMongo(dados){
+
+  if(mongoose.connection.readyState !== 1){
+    console.log("⚠️ Mongo offline - não salvou");
+    return;
+  }
+
+  const hoje = new Date().toISOString().split("T")[0];
+
+  for(const banca in dados){
+
+    for(const item of dados[banca]){
+
+      try{
+
+        const uniqueId = `${hoje}-${banca}-${item.horario}`;
+
+        await Resultado.findOneAndUpdate(
+          { uniqueId },
+          { ...item, data: hoje, banca, uniqueId },
+          { upsert: true }
+        );
+
+      }catch(e){
+        console.log("❌ erro salvar:", e.message);
+      }
+
+    }
+
+  }
+
 }
 
 //////////////////////////////////////////////////
