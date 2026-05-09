@@ -186,6 +186,8 @@ async function pegarFederal(){
     p5: item.p5
   }));
 
+  lista = lista.slice(0,7); // 🔥 garante só 7 dias
+
   return lista;
 }
 
@@ -200,7 +202,7 @@ async function salvarMongo(dados){
     return;
   }
 
-  const hoje = new Date().toISOString().split("T")[0];
+  const hoje = hojeBR();
 
   for(const banca in dados){
 
@@ -245,7 +247,7 @@ function salvarHistorico(dadosHoje){
 
   let historico = lerHistorico();
 
-  let dataBase = new Date().toISOString().split("T")[0];
+  let dataBase = hojeBR();
 
   try{
     const exemplo =
@@ -325,13 +327,15 @@ async function carregarTudo(){
     ...bancas,
     federal
   };
+  
+  await salvarMongo(dadosHoje);
 
   salvarHistorico(dadosHoje);
 
   const historico = lerHistorico();
 
   cache = {
-    atualizado: new Date().toLocaleString(),
+    atualizado: agoraBR(),
     historico
   };
 
