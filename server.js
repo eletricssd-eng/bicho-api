@@ -186,8 +186,7 @@ async function pegarFederal(){
     p5: item.p5
   }));
 
-  lista = lista.slice(0,7); // 🔥 garante só 7 dias
-
+  lista = lista.slice(0,1); // 🔥 garante só 1 resultado
   return lista;
 }
 
@@ -327,7 +326,7 @@ async function carregarTudo(){
     ...bancas,
     federal
   };
-  
+
   await salvarMongo(dadosHoje);
 
   salvarHistorico(dadosHoje);
