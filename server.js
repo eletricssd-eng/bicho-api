@@ -2,17 +2,16 @@ import express from "express";
 import axios from "axios";
 import cors from "cors";
 import * as cheerio from "cheerio";
-import fs from "fs";
 import mongoose from "mongoose";
 
 const app = express();
+
 app.use(cors());
 
 const PORT = process.env.PORT || 3000;
-const HISTORICO_FILE = "./historico.json";
 
 //////////////////////////////////////////////////
-// 🇧🇷 TIMEZONE BRASIL (CORREÇÃO PRINCIPAL)
+// 🇧🇷 TIMEZONE BRASIL
 //////////////////////////////////////////////////
 
 function agoraBR(){
@@ -24,11 +23,11 @@ function agoraBR(){
 function hojeBR(){
   return new Date().toLocaleDateString("sv-SE", {
     timeZone: "America/Sao_Paulo"
-  }); // YYYY-MM-DD
+  });
 }
 
 //////////////////////////////////////////////////
-// 🔥 MONGO (AUTO RECONNECT)
+// 🔥 MONGO
 //////////////////////////////////////////////////
 
 const MONGO_URL = process.env.MONGO_URL;
@@ -41,6 +40,7 @@ async function conectarMongo(){
   }
 
   try{
+
     await mongoose.connect(MONGO_URL, {
       serverSelectionTimeoutMS: 5000
     });
@@ -48,53 +48,82 @@ async function conectarMongo(){
     console.log("✅ Mongo conectado");
 
   }catch(e){
+
     console.log("❌ erro mongo:", e.message);
+
     setTimeout(conectarMongo, 5000);
   }
-
 }
 
 conectarMongo();
 
 //////////////////////////////////////////////////
-// 📦 MODEL (COM UNIQUEID)
+// 📦 MODEL
 //////////////////////////////////////////////////
 
 const ResultadoSchema = new mongoose.Schema({
-  uniqueId: { type: String, unique: true },
+
+  uniqueId: {
+    type: String,
+    unique: true
+  },
 
   data: String,
   banca: String,
   horario: String,
+
   p1: String,
   p2: String,
   p3: String,
   p4: String,
   p5: String
+
 });
 
-const Resultado = mongoose.model("Resultado", ResultadoSchema);
+//////////////////////////////////////////////////
+// 🚀 INDEX PERFORMANCE
+//////////////////////////////////////////////////
+
+ResultadoSchema.index({ data: -1 });
+ResultadoSchema.index({ banca: 1 });
+
+const Resultado = mongoose.model(
+  "Resultado",
+  ResultadoSchema
+);
 
 //////////////////////////////////////////////////
 // 🔍 SCRAPER
 //////////////////////////////////////////////////
 
 async function scraper(url){
+
   try{
+
     const { data } = await axios.get(url, {
-      headers: { "User-Agent": "Mozilla/5.0" }
+
+      headers:{
+        "User-Agent":"Mozilla/5.0"
+      },
+
+      timeout:10000
+
     });
 
     const $ = cheerio.load(data);
+
     const lista = [];
 
     const tabelas = $("table");
 
-    tabelas.each((i, tabela)=>{
+    tabelas.each((i,tabela)=>{
 
       let titulo = "";
 
-      const prev = $(tabela).prevAll("h2, h3, strong").first();
+      const prev =
+        $(tabela)
+        .prevAll("h2,h3,strong")
+        .first();
 
       if(prev.length){
         titulo = prev.text().trim();
@@ -107,37 +136,56 @@ async function scraper(url){
       const nums = [];
 
       $(tabela).find("tr").each((i,tr)=>{
+
         const texto = $(tr).text();
 
         const match = texto.match(/\d{4}/);
-        if(match) nums.push(match[0]);
+
+        if(match){
+          nums.push(match[0]);
+        }
+
       });
 
-      // 🔥 FILTRO PRINCIPAL (AQUI ESTÁ A CORREÇÃO)
-      const tituloLower = titulo.toLowerCase();
+      //////////////////////////////////////////////////
+      // 🔥 FILTRO FEDERAL
+      //////////////////////////////////////////////////
 
-      const isFederal = tituloLower.includes("federal");
+      const tituloLower =
+        titulo.toLowerCase();
 
-      const is10 = tituloLower.includes("1 ao 10") || tituloLower.includes("10º");
-      const is5  = tituloLower.includes("1 ao 5") || tituloLower.includes("5º");
+      const isFederal =
+        tituloLower.includes("federal");
 
-      // ❌ remove versão errada da federal
-      if(isFederal && is10) return;
+      const is10 =
+        tituloLower.includes("1 ao 10")
+        || tituloLower.includes("10º");
 
-      // ✅ garante só 1 ao 5
+      if(isFederal && is10){
+        return;
+      }
+
+      //////////////////////////////////////////////////
+      // ✅ SOMENTE RESULTADOS COMPLETOS
+      //////////////////////////////////////////////////
+
       if(nums.length >= 5){
 
         lista.push({
-          horario: titulo
-            .replace(/1 ao 10º?/gi, "")
-            .replace(/1 ao 5º?/gi, "")
-            .trim(),
+
+          horario:
+            titulo
+              .replace(/1 ao 10º?/gi,"")
+              .replace(/1 ao 5º?/gi,"")
+              .replace(/resultado do dia/gi,"")
+              .trim(),
 
           p1: nums[0],
           p2: nums[1],
           p3: nums[2],
           p4: nums[3],
           p5: nums[4]
+
         });
 
       }
@@ -147,7 +195,9 @@ async function scraper(url){
     return lista;
 
   }catch(e){
+
     console.log("❌ erro scraper:", url);
+
     return [];
   }
 }
@@ -157,47 +207,80 @@ async function scraper(url){
 //////////////////////////////////////////////////
 
 async function pegarBancas(){
+
+  const [
+    rio,
+    look,
+    nacional
+  ] = await Promise.all([
+
+    scraper(
+      "https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"
+    ),
+
+    scraper(
+      "https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"
+    ),
+
+    scraper(
+      "https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje"
+    )
+
+  ]);
+
   return {
-    rio: await scraper("https://www.resultadofacil.com.br/resultados-pt-rio-de-hoje"),
-    look: await scraper("https://www.resultadofacil.com.br/resultados-look-loterias-de-hoje"),
-    nacional: await scraper("https://www.resultadofacil.com.br/resultados-loteria-nacional-de-hoje")
+    rio,
+    look,
+    nacional
   };
 }
 
 //////////////////////////////////////////////////
-// 🇧🇷 FEDERAL (CORRIGIDA)
+// 🇧🇷 FEDERAL
 //////////////////////////////////////////////////
 
 async function pegarFederal(){
-  let lista = await scraper("https://www.resultadofacil.com.br/resultado-banca-federal");
 
-  // 🔥 FORÇA PADRÃO 1 AO 5 + LIMPA TEXTO
+  let lista = await scraper(
+    "https://www.resultadofacil.com.br/resultado-banca-federal"
+  );
+
   lista = lista.map(item => ({
-    horario: item.horario
-      .replace(/1 ao 10º?/gi, "")
-      .replace(/1 ao 5º?/gi, "")
-      .replace(/resultado do dia/gi, "")
-      .trim(),
 
-    p1: item.p1,
-    p2: item.p2,
-    p3: item.p3,
-    p4: item.p4,
-    p5: item.p5
+    horario:
+      item.horario
+        .replace(/1 ao 10º?/gi,"")
+        .replace(/1 ao 5º?/gi,"")
+        .replace(/resultado do dia/gi,"")
+        .trim(),
+
+    p1:item.p1,
+    p2:item.p2,
+    p3:item.p3,
+    p4:item.p4,
+    p5:item.p5
+
   }));
 
-  lista = lista.slice(0,1); // 🔥 garante só 1 resultado
+  //////////////////////////////////////////////////
+  // 🔥 SOMENTE 1 FEDERAL
+  //////////////////////////////////////////////////
+
+  lista = lista.slice(0,1);
+
   return lista;
 }
 
 //////////////////////////////////////////////////
-// 💾 SALVAR (SEM DUPLICAR)
+// 💾 SALVAR MONGO
 //////////////////////////////////////////////////
 
 async function salvarMongo(dados){
 
   if(mongoose.connection.readyState !== 1){
-    console.log("⚠️ Mongo offline - não salvou");
+
+    console.log("⚠️ Mongo offline");
+
     return;
   }
 
@@ -209,16 +292,33 @@ async function salvarMongo(dados){
 
       try{
 
-        const uniqueId = `${hoje}-${banca}-${item.horario}`;
+        const uniqueId =
+          `${hoje}-${banca}-${item.horario}`;
 
         await Resultado.findOneAndUpdate(
+
           { uniqueId },
-          { ...item, data: hoje, banca, uniqueId },
-          { upsert: true }
+
+          {
+            ...item,
+            data: hoje,
+            banca,
+            uniqueId
+          },
+
+          {
+            upsert:true
+          }
+
         );
 
       }catch(e){
-        console.log("❌ erro salvar:", e.message);
+
+        console.log(
+          "❌ erro salvar:",
+          e.message
+        );
+
       }
 
     }
@@ -228,98 +328,37 @@ async function salvarMongo(dados){
 }
 
 //////////////////////////////////////////////////
-// 💾 HISTÓRICO
+// 🚀 CACHE
 //////////////////////////////////////////////////
 
-function lerHistorico(){
-  try{
-    if(!fs.existsSync(HISTORICO_FILE)) return {};
-    const data = fs.readFileSync(HISTORICO_FILE);
-    if(!data || data.length === 0) return {};
-    return JSON.parse(data);
-  }catch{
-    return {};
-  }
-}
+let cache = null;
 
-function salvarHistorico(dadosHoje){
-
-  let historico = lerHistorico();
-
-  let dataBase = hojeBR();
-
-  try{
-    const exemplo =
-      dadosHoje.rio?.[0]?.horario ||
-      dadosHoje.look?.[0]?.horario ||
-      dadosHoje.nacional?.[0]?.horario ||
-      dadosHoje.federal?.[0]?.horario;
-
-    const match = exemplo?.match(/\d{2}\/\d{2}\/\d{4}/);
-
-    if(match){
-      const [d,m,a] = match[0].split("/");
-      dataBase = `${a}-${m}-${d}`;
-    }
-
-  }catch{}
-
-  // 🔥 garante estrutura
-  if(!historico[dataBase]){
-    historico[dataBase] = {
-      rio: [],
-      look: [],
-      nacional: [],
-      federal: []
-    };
-  }
-
-  const bancas = ["rio","look","nacional","federal"];
-
-  bancas.forEach(banca => {
-
-    const novos = dadosHoje[banca] || [];
-    const antigos = historico[dataBase][banca] || [];
-
-    // 🔥 remove duplicados por horário
-    const mapa = {};
-
-    antigos.forEach(i => mapa[i.horario] = i);
-    novos.forEach(i => mapa[i.horario] = i);
-
-    historico[dataBase][banca] = Object.values(mapa);
-
-  });
-
-  // 🔥 mantém só 7 dias
-  const datas = Object.keys(historico)
-    .sort((a,b)=> new Date(b) - new Date(a))
-    .slice(0,7);
-
-  const novo = {};
-  datas.forEach(d => novo[d] = historico[d]);
-
-  fs.writeFileSync(HISTORICO_FILE, JSON.stringify(novo, null, 2));
-}
+let tempo = 0;
 
 //////////////////////////////////////////////////
 // 🚀 MAIN
 //////////////////////////////////////////////////
 
-let cache = null;
-let tempo = 0;
-
 async function carregarTudo(){
 
   const agora = Date.now();
 
-  if(cache && agora - tempo < 60000){
+  //////////////////////////////////////////////////
+  // 🔥 CACHE 60s
+  //////////////////////////////////////////////////
+
+  if(cache && (agora - tempo < 60000)){
     return cache;
   }
 
   console.log("🔄 Atualizando dados...");
 
+  //////////////////////////////////////////////////
+  // 🔍 SCRAPING
+  //////////////////////////////////////////////////
+
   const bancas = await pegarBancas();
+
   const federal = await pegarFederal();
 
   const dadosHoje = {
@@ -327,15 +366,112 @@ async function carregarTudo(){
     federal
   };
 
+  //////////////////////////////////////////////////
+  // 💾 SALVA MONGO
+  //////////////////////////////////////////////////
+
   await salvarMongo(dadosHoje);
 
-  salvarHistorico(dadosHoje);
+  //////////////////////////////////////////////////
+  // 🔥 ÚLTIMOS 7 DIAS DIRETO DO MONGO
+  //////////////////////////////////////////////////
 
-  const historico = lerHistorico();
+  const seteDias = new Date();
+
+  seteDias.setDate(
+    seteDias.getDate() - 7
+  );
+
+  const limite =
+    seteDias
+      .toISOString()
+      .split("T")[0];
+
+  const resultados =
+    await Resultado.find({
+
+      data:{
+        $gte: limite
+      }
+
+    })
+    .sort({
+      data:-1
+    });
+
+  //////////////////////////////////////////////////
+  // 🔥 MONTA HISTÓRICO
+  //////////////////////////////////////////////////
+
+  const historico = {};
+
+  resultados.forEach(r => {
+
+    if(!historico[r.data]){
+
+      historico[r.data] = {
+        rio:[],
+        look:[],
+        nacional:[],
+        federal:[]
+      };
+
+    }
+
+    if(!historico[r.data][r.banca]){
+      historico[r.data][r.banca] = [];
+    }
+
+    //////////////////////////////////////////////////
+    // 🔥 EVITA DUPLICADOS
+    //////////////////////////////////////////////////
+
+    const existe =
+      historico[r.data][r.banca]
+      .find(i => i.horario === r.horario);
+
+    if(existe) return;
+
+    historico[r.data][r.banca].push({
+
+      horario:r.horario,
+
+      p1:r.p1,
+      p2:r.p2,
+      p3:r.p3,
+      p4:r.p4,
+      p5:r.p5
+
+    });
+
+  });
+
+  //////////////////////////////////////////////////
+  // 🔥 ORDENA DATAS
+  //////////////////////////////////////////////////
+
+  const ordenado = {};
+
+  Object.keys(historico)
+
+    .sort((a,b)=>
+      new Date(b) - new Date(a)
+    )
+
+    .forEach(d => {
+      ordenado[d] = historico[d];
+    });
+
+  //////////////////////////////////////////////////
+  // 🚀 CACHE FINAL
+  //////////////////////////////////////////////////
 
   cache = {
+
     atualizado: agoraBR(),
-    historico
+
+    historico: ordenado
+
   };
 
   tempo = agora;
@@ -344,12 +480,87 @@ async function carregarTudo(){
 }
 
 //////////////////////////////////////////////////
-// 🌐 ROTA
+// 🌐 API
 //////////////////////////////////////////////////
 
-app.get("/resultados", async (req,res)=>{
-  const dados = await carregarTudo();
-  res.json(dados);
+app.get("/resultados", async(req,res)=>{
+
+  try{
+
+    const dados = await carregarTudo();
+
+    res.json(dados);
+
+  }catch(e){
+
+    console.log(e);
+
+    res.status(500).json({
+      erro:true
+    });
+
+  }
+
+});
+
+//////////////////////////////////////////////////
+// 🌐 ÚLTIMOS RESULTADOS
+//////////////////////////////////////////////////
+
+app.get("/ultimos", async(req,res)=>{
+
+  try{
+
+    const dados =
+      await Resultado.find()
+
+      .sort({
+        data:-1
+      })
+
+      .limit(30);
+
+    res.json(dados);
+
+  }catch(e){
+
+    res.status(500).json({
+      erro:true
+    });
+
+  }
+
+});
+
+//////////////////////////////////////////////////
+// 🌐 POR BANCA
+//////////////////////////////////////////////////
+
+app.get("/banca/:nome", async(req,res)=>{
+
+  try{
+
+    const dados =
+      await Resultado.find({
+
+        banca:req.params.nome
+
+      })
+
+      .sort({
+        data:-1
+      });
+
+    res.json(dados);
+
+  }catch(e){
+
+    res.status(500).json({
+      erro:true
+    });
+
+  }
+
 });
 
 //////////////////////////////////////////////////
@@ -357,5 +568,10 @@ app.get("/resultados", async (req,res)=>{
 //////////////////////////////////////////////////
 
 app.listen(PORT, ()=>{
-  console.log("🚀 Server rodando na porta", PORT);
+
+  console.log(
+    "🚀 Server rodando na porta",
+    PORT
+  );
+
 });

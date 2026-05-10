@@ -57,6 +57,8 @@ function login(usuario, senha){
   usuarioAtual = usuario;
 
   localStorage.setItem("sessao", usuario);
+  localStorage.setItem("ultimoUsuario", usuario);
+  localStorage.setItem("ultimaSenha", senha);
 
   iniciarApp();
 }
@@ -81,7 +83,23 @@ function logout(){
 
   location.reload();
 }
+//////////////////////////////////////////////////
+// PREENCHER LOGIN AUTOMÁTICO
+//////////////////////////////////////////////////
 
+function carregarUltimoLogin(){
+
+  const ultimoUsuario = localStorage.getItem("ultimoUsuario");
+  const ultimaSenha = localStorage.getItem("ultimaSenha");
+
+  if(document.getElementById("usuario")){
+    document.getElementById("usuario").value = ultimoUsuario || "";
+  }
+
+  if(document.getElementById("senha")){
+    document.getElementById("senha").value = ultimaSenha || "";
+  }
+}
 // ================= BICHOS =================
 const bichos = [
 ["01","🦩","Avestruz"],
@@ -979,6 +997,8 @@ async function carregarPalpite(banca = bancaAtual){
 
 // ================= INIT =================
 window.onload = ()=>{
+
+  carregarUltimoLogin();
 
   const app = document.getElementById("app");
 
