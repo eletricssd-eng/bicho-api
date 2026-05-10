@@ -164,6 +164,12 @@ async function scraper(url){
       if(isFederal && is10){
         return;
       }
+      if(
+  !isFederal &&
+  tituloLower.includes("federal")
+){
+  return;
+}
 
       //////////////////////////////////////////////////
       // ✅ SOMENTE RESULTADOS COMPLETOS
@@ -174,11 +180,17 @@ async function scraper(url){
         lista.push({
 
           horario:
-            titulo
-              .replace(/1 ao 10º?/gi,"")
-              .replace(/1 ao 5º?/gi,"")
-              .replace(/resultado do dia/gi,"")
-              .trim(),
+  titulo
+
+    .replace(/resultado do dia/gi,"")
+    .replace(/\d{2}\/\d{2}\/\d{4}/g,"")
+    .replace(/\(.+?\)/g,"")
+    .replace(/1 ao 10º?/gi,"")
+    .replace(/1 ao 5º?/gi,"")
+
+    .replace(/\s+/g," ")
+
+    .trim(),
 
           p1: nums[0],
           p2: nums[1],
@@ -284,16 +296,32 @@ async function salvarMongo(dados){
     return;
   }
 
-  const hoje = hojeBR();
+  function extrairData(item){
 
+  const match =
+    item.horario?.match(/\d{2}\/\d{2}\/\d{4}/);
+
+  if(match){
+
+    const [d,m,a] =
+      match[0].split("/");
+
+    return `${a}-${m}-${d}`;
+  }
+
+  return hojeBR();
+}
   for(const banca in dados){
 
     for(const item of dados[banca]){
 
       try{
 
-        const uniqueId =
-          `${hoje}-${banca}-${item.horario}`;
+        const dataResultado =
+  extrairData(item);
+
+const uniqueId =
+  `${dataResultado}-${banca}-${item.horario}`;
 
         await Resultado.findOneAndUpdate(
 
@@ -301,7 +329,7 @@ async function salvarMongo(dados){
 
           {
             ...item,
-            data: hoje,
+            data: dataResultado,
             banca,
             uniqueId
           },
